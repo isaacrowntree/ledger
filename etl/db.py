@@ -9,7 +9,9 @@ CREATE TABLE IF NOT EXISTS accounts (
     id INTEGER PRIMARY KEY,
     name TEXT NOT NULL UNIQUE,
     source_type TEXT NOT NULL,
-    currency TEXT NOT NULL DEFAULT 'AUD'
+    currency TEXT NOT NULL DEFAULT 'AUD',
+    account_type TEXT NOT NULL DEFAULT 'checking',
+    display INTEGER NOT NULL DEFAULT 1
 );
 
 CREATE TABLE IF NOT EXISTS categories (
@@ -34,6 +36,7 @@ CREATE TABLE IF NOT EXISTS transactions (
     reference_id TEXT,
     notes TEXT,
     source_type TEXT NOT NULL,
+    is_transfer INTEGER NOT NULL DEFAULT 0,
     dedup_hash TEXT NOT NULL UNIQUE,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -61,6 +64,79 @@ CREATE TABLE IF NOT EXISTS category_rules_learned (
     category_id INTEGER REFERENCES categories(id),
     times_seen INTEGER DEFAULT 1
 );
+
+CREATE TABLE IF NOT EXISTS transaction_tags (
+    transaction_id INTEGER NOT NULL REFERENCES transactions(id),
+    tag TEXT NOT NULL,
+    PRIMARY KEY (transaction_id, tag)
+);
+
+CREATE TABLE IF NOT EXISTS holdings (
+    id INTEGER PRIMARY KEY,
+    asset_type TEXT NOT NULL,  -- shares, property, super, crypto, other
+    name TEXT NOT NULL,
+    ticker TEXT,               -- ASX/NYSE ticker for shares
+    units REAL DEFAULT 0,
+    cost_basis REAL DEFAULT 0,
+    current_value REAL,
+    as_at_date TEXT,
+    notes TEXT,
+    UNIQUE(asset_type, name)
+);
+
+CREATE TABLE IF NOT EXISTS asset_events (
+    id INTEGER PRIMARY KEY,
+    holding_id INTEGER NOT NULL REFERENCES holdings(id),
+    date TEXT NOT NULL,
+    event_type TEXT NOT NULL,  -- buy, sell, dividend, split, grant, valuation
+    units REAL,
+    price_per_unit REAL,
+    total_value REAL NOT NULL,
+    fees REAL DEFAULT 0,
+    reference TEXT,            -- trade ID, grant number, etc.
+    source_file TEXT,
+    notes TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS transaction_splits (
+    id INTEGER PRIMARY KEY,
+    transaction_id INTEGER NOT NULL REFERENCES transactions(id),
+    business_name TEXT NOT NULL,
+    business_pct REAL NOT NULL,
+    business_amount REAL NOT NULL,
+    UNIQUE(transaction_id, business_name)
+);
+
+CREATE TABLE IF NOT EXISTS work_trips (
+    id INTEGER PRIMARY KEY,
+    fy INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    start_date TEXT NOT NULL,
+    end_date TEXT NOT NULL,
+    notes TEXT,
+    UNIQUE(fy, name)
+);
+
+CREATE TABLE IF NOT EXISTS work_trip_expenses (
+    id INTEGER PRIMARY KEY,
+    trip_id INTEGER NOT NULL REFERENCES work_trips(id),
+    transaction_id INTEGER REFERENCES transactions(id),
+    expense_type TEXT NOT NULL,  -- flights, accommodation, car, meals, other
+    amount REAL NOT NULL,
+    description TEXT,
+    UNIQUE(trip_id, transaction_id, expense_type)
+);
+
+CREATE TABLE IF NOT EXISTS tax_overrides (
+    id INTEGER PRIMARY KEY,
+    fy INTEGER NOT NULL,
+    section TEXT NOT NULL,       -- income, deduction, rental, business
+    label TEXT NOT NULL,
+    amount REAL NOT NULL,
+    notes TEXT,
+    UNIQUE(fy, section, label)
+);
 """
 
 
@@ -79,13 +155,13 @@ def init_db(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
-def ensure_account(conn: sqlite3.Connection, name: str, source_type: str, currency: str = "AUD") -> int:
+def ensure_account(conn: sqlite3.Connection, name: str, source_type: str, currency: str = "AUD", account_type: str = "checking", display: int = 1) -> int:
     row = conn.execute("SELECT id FROM accounts WHERE name = ?", (name,)).fetchone()
     if row:
         return row["id"]
     cursor = conn.execute(
-        "INSERT INTO accounts (name, source_type, currency) VALUES (?, ?, ?)",
-        (name, source_type, currency),
+        "INSERT INTO accounts (name, source_type, currency, account_type, display) VALUES (?, ?, ?, ?, ?)",
+        (name, source_type, currency, account_type, display),
     )
     conn.commit()
     return cursor.lastrowid
@@ -129,16 +205,17 @@ def insert_transaction(
     dedup_hash: str,
     source_file: str,
     raw_data: str,
+    is_transfer: bool = False,
 ) -> Optional[int]:
     if hash_exists(conn, dedup_hash):
         return None
     cursor = conn.execute(
         """INSERT INTO transactions
         (account_id, date, description, amount, original_amount, original_currency,
-         fee, category_id, category_confidence, reference_id, source_type, dedup_hash)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+         fee, category_id, category_confidence, reference_id, source_type, is_transfer, dedup_hash)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (account_id, date, description, amount, original_amount, original_currency,
-         fee, category_id, category_confidence, reference_id, source_type, dedup_hash),
+         fee, category_id, category_confidence, reference_id, source_type, int(is_transfer), dedup_hash),
     )
     txn_id = cursor.lastrowid
     conn.execute(
@@ -174,4 +251,4 @@ def load_accounts_from_config(conn: sqlite3.Connection, config_path: Path) -> No
     with open(config_path) as f:
         config = yaml.safe_load(f)
     for acct in config.get("accounts", []):
-        ensure_account(conn, acct["name"], acct["source_type"], acct.get("currency", "AUD"))
+        ensure_account(conn, acct["name"], acct["source_type"], acct.get("currency", "AUD"), acct.get("account_type", "checking"), acct.get("display", 1))

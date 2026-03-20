@@ -37,9 +37,12 @@ class Categorizer:
                 if cat_id:
                     return cat_id, 0.9
 
-        # 3. Regex match
+        # 3. Regex match (rules with source_type filter are checked against txn.source_type)
         for rule in self.rules:
             if rule["type"] == "regex":
+                rule_source = rule.get("source_type")
+                if rule_source and rule_source != txn.source_type:
+                    continue
                 if re.search(rule["pattern"], desc_upper, re.IGNORECASE):
                     cat_id = db.get_category_id(self.conn, rule["category"])
                     if cat_id:
