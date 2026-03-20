@@ -13,7 +13,7 @@ export default defineConfig({
       favicon: '/favicon.svg',
       customCss: ['./src/styles/custom.css'],
       social: [
-        { icon: 'github', label: 'GitHub', link: 'https://github.com/isaacrowntree/ledger' },
+        { icon: 'github', label: 'GitHub', href: 'https://github.com/isaacrowntree/ledger' },
       ],
       sidebar: [
         {
