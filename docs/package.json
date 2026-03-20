@@ -1,5 +1,6 @@
 {
   "name": "ledger-docs",
+  "type": "module",
   "private": true,
   "scripts": {
     "dev": "astro dev",
@@ -8,7 +9,8 @@
   },
   "dependencies": {
     "@astrojs/starlight": "^0.32.0",
-    "astro": "^5.5.0",
-    "sharp": "^0.33.0"
+    "astro": "^5.2.0",
+    "sharp": "^0.33.0",
+    "zod": "^3.25.0"
   }
 }
