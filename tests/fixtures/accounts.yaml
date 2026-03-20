@@ -1,0 +1,56 @@
+accounts:
+  - name: "Test Checking"
+    source_type: ing
+    currency: AUD
+    account_type: checking
+    file_prefix: test_checking
+
+  - name: "Test Joint"
+    source_type: ing
+    currency: AUD
+    account_type: checking
+    file_prefix: test_joint
+
+  - name: "Test Savings"
+    source_type: ing
+    currency: AUD
+    account_type: savings
+    file_prefix: test_savings
+
+  - name: "Test Mortgage"
+    source_type: ing
+    currency: AUD
+    account_type: loan
+    file_prefix: test_mortgage
+
+  - name: "PayPal"
+    source_type: paypal
+    currency: AUD
+    account_type: other
+    source_of_truth: true
+    payment_patterns:
+      - "PAYPAL"
+
+  - name: "Test Credit Card"
+    source_type: coles
+    currency: AUD
+    account_type: credit
+    source_of_truth: true
+    payment_patterns:
+      - "TEST CREDIT CARD"
+
+  - name: "Test Bankwest"
+    source_type: bankwest
+    currency: AUD
+    account_type: credit
+    source_of_truth: true
+    payment_patterns:
+      - "BANKWEST CREDIT"
+
+  - name: "Test HSBC"
+    source_type: hsbc
+    currency: AUD
+    account_type: credit
+    source_of_truth: true
+    payment_patterns:
+      - "HSBC CARDS"

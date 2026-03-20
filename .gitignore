@@ -1,0 +1,36 @@
+# Personal config (use .example templates)
+config/accounts.yaml
+config/categories.yaml
+config/tax.yaml
+
+# Personal data
+data/
+staging/
+
+# Credentials
+.env
+.env.local
+.env.*
+data/basiq_state.json
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+
+# Frontend
+node_modules/
+frontend/dist/
+
+# Editor / tools
+.DS_Store
+.claude/
+.playwright-mcp/
+
+# Personal scripts
+scripts/post-ingest.sh
+
+# Scratch files
+hsbc_statements_page.md
+hsbc_verification.png

@@ -1,0 +1,32 @@
+---
+title: Ledger
+description: Personal finance ETL + dashboard for Australian bank statements and ATO tax returns.
+template: splash
+hero:
+  tagline: Ingest bank statements. Categorise transactions. Generate ATO tax reports. All local.
+  actions:
+    - text: Get Started
+      link: /ledger/getting-started/
+      icon: right-arrow
+    - text: View on GitHub
+      link: https://github.com/isaacrowntree/ledger
+      icon: external
+      variant: minimal
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+
+<CardGrid>
+  <Card title="Multi-bank ingestion" icon="document">
+    Parse PDFs and CSVs from ING, PayPal, Bankwest, HSBC, Coles, Amex, and Airbnb.
+  </Card>
+  <Card title="Auto-categorisation" icon="list-format">
+    Regex rules assign categories. Manual overrides train the system. Tags add sub-classification.
+  </Card>
+  <Card title="ATO tax reports" icon="approve-check">
+    Structured views matching the Australian individual tax return — salary, rental, business, deductions.
+  </Card>
+  <Card title="Local-first" icon="laptop">
+    SQLite database, no cloud. Your financial data stays on your machine.
+  </Card>
+</CardGrid>

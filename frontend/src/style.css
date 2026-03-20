@@ -1,0 +1,429 @@
+:root {
+  --bg: #0f1117;
+  --surface: #1a1d27;
+  --border: #2a2d3a;
+  --text: #e4e4e7;
+  --text-dim: #8b8d98;
+  --accent: #6366f1;
+  --green: #22c55e;
+  --red: #ef4444;
+  --yellow: #eab308;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.5;
+}
+
+#app {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 1rem;
+}
+
+header {
+  display: flex;
+  align-items: center;
+  gap: 2rem;
+  padding: 1rem 0;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 1.5rem;
+}
+
+header h1 {
+  font-size: 1.5rem;
+  font-weight: 600;
+}
+
+nav { display: flex; gap: 0.5rem; }
+
+.tab {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  padding: 0.4rem 1rem;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.875rem;
+  transition: all 0.15s;
+}
+.tab:hover { color: var(--text); border-color: var(--text-dim); }
+.tab.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+.view { display: none; }
+.view.active { display: block; }
+
+/* Filters */
+.filters-bar {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+  flex-wrap: wrap;
+}
+
+.filters-bar input,
+.filters-bar select {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 0.4rem 0.6rem;
+  border-radius: 6px;
+  font-size: 0.875rem;
+}
+
+/* Charts */
+.charts-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.chart-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1rem;
+}
+
+.chart-card h3 {
+  font-size: 0.875rem;
+  color: var(--text-dim);
+  margin-bottom: 0.75rem;
+  font-weight: 500;
+}
+
+/* Summary cards */
+.summary-cards {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1rem;
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1rem;
+}
+
+.card-label { font-size: 0.8rem; color: var(--text-dim); margin-bottom: 0.25rem; }
+.card-value { font-size: 1.5rem; font-weight: 600; }
+.card.income .card-value { color: var(--green); }
+.card.expense .card-value { color: var(--red); }
+.card-change { font-size: 0.75rem; margin-top: 0.25rem; }
+.card-change.positive { color: var(--green); }
+.card-change.negative { color: var(--red); }
+
+/* Transaction table */
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+th {
+  text-align: left;
+  padding: 0.5rem;
+  border-bottom: 2px solid var(--border);
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+td {
+  padding: 0.5rem;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.875rem;
+}
+
+tr:hover { background: var(--surface); }
+
+.positive { color: var(--green); }
+.negative { color: var(--red); }
+.fx { color: var(--text-dim); font-size: 0.75rem; }
+
+.cat-select,
+.notes-input {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text);
+  padding: 0.2rem 0.4rem;
+  border-radius: 4px;
+  font-size: 0.8rem;
+  width: 100%;
+}
+
+.cat-select:hover,
+.notes-input:hover {
+  border-color: var(--border);
+}
+
+.cat-select:focus,
+.notes-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.cat-select.saved,
+.notes-input.saved {
+  border-color: var(--green);
+}
+
+/* Budget */
+.budget-row {
+  margin-bottom: 1rem;
+}
+
+.budget-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.875rem;
+  margin-bottom: 0.25rem;
+}
+
+.budget-track {
+  height: 8px;
+  background: var(--surface);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.budget-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 4px;
+  transition: width 0.3s;
+}
+
+.budget-fill.over { background: var(--red); }
+
+.budget-warning {
+  font-size: 0.75rem;
+  color: var(--red);
+  margin-top: 0.15rem;
+}
+
+.budget-row.over .budget-label { color: var(--red); }
+
+/* Net Worth Panel */
+.net-worth-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1rem;
+  margin-bottom: 1rem;
+}
+
+.nw-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.75rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.nw-header h3 {
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.nw-total {
+  font-size: 1.5rem;
+  font-weight: 700;
+}
+
+.nw-groups {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 1rem;
+}
+
+.nw-group-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.25rem;
+}
+
+.nw-group-label {
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-dim);
+  font-weight: 500;
+}
+
+.nw-group-total {
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.nw-account {
+  display: flex;
+  justify-content: space-between;
+  padding: 0.15rem 0;
+  font-size: 0.8rem;
+}
+
+.nw-account-name {
+  color: var(--text-dim);
+}
+
+.nw-account-balance {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Checkbox filter labels */
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.875rem;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.checkbox-label input[type="checkbox"] {
+  accent-color: var(--accent);
+}
+
+/* Summary cards - wider grid */
+.summary-cards {
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+/* Mini table (top merchants) */
+.mini-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 0.5rem;
+}
+.mini-table th {
+  font-size: 0.75rem;
+}
+.mini-table td {
+  font-size: 0.8rem;
+}
+
+/* ATO Tax Tab */
+.tax-header {
+  display: flex;
+  align-items: baseline;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+.tax-header h2 {
+  font-size: 1.25rem;
+  font-weight: 600;
+}
+.tax-dates {
+  font-size: 0.85rem;
+  color: var(--text-dim);
+}
+
+.tax-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.tax-section {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1rem;
+  margin-bottom: 1rem;
+}
+.tax-section h3 {
+  font-size: 0.95rem;
+  font-weight: 600;
+  margin-bottom: 0.5rem;
+}
+.tax-hint {
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  margin-bottom: 0.5rem;
+  font-style: italic;
+}
+
+.tax-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.tax-table th {
+  text-align: left;
+  padding: 0.4rem 0.5rem;
+  border-bottom: 2px solid var(--border);
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.tax-table td {
+  padding: 0.35rem 0.5rem;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.8rem;
+}
+.tax-table td:last-child,
+.tax-table th:last-child {
+  text-align: right;
+}
+.tax-total td {
+  font-weight: 600;
+  border-top: 2px solid var(--border);
+  padding-top: 0.5rem;
+}
+
+/* Spreadsheet Tab */
+.ss-tabs {
+  display: flex;
+  gap: 0.25rem;
+}
+
+.ss-tab {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  padding: 0.3rem 0.75rem;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.8rem;
+  transition: all 0.15s;
+}
+.ss-tab:hover { color: var(--text); border-color: var(--text-dim); }
+.ss-tab.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+.ss-view { display: none; }
+.ss-view.active { display: block; }
+
+.ss-summary {
+  display: flex;
+  gap: 1.5rem;
+  padding: 0.5rem 0;
+  font-size: 0.85rem;
+  color: var(--text-dim);
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 0.75rem;
+}
+
+.ss-table-wrap {
+  overflow-x: auto;
+}
+
+.ss-full-table td:first-child { white-space: nowrap; }
+
+/* Responsive */
+@media (max-width: 768px) {
+  .charts-grid { grid-template-columns: 1fr; }
+  .summary-cards { grid-template-columns: 1fr; }
+  header { flex-direction: column; align-items: flex-start; gap: 0.5rem; }
+}

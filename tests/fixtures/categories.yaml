@@ -1,0 +1,127 @@
+categories:
+  - name: Salary
+    is_income: true
+  - name: Airbnb Income
+    is_income: true
+  - name: Freelance Income
+    is_income: true
+  - name: Interest Income
+    is_income: true
+  - name: Other Income
+    is_income: true
+  - name: "Business: Hosting & Infrastructure"
+  - name: "Business: Software & Subscriptions"
+  - name: "Business: Equipment"
+  - name: "Business: Other"
+  - name: "Rental: Maintenance"
+  - name: "Rental: Other"
+  - name: Groceries
+    budget_monthly: 600
+  - name: Eating Out
+    budget_monthly: 300
+  - name: Coffee
+  - name: Public Transport
+  - name: Fuel
+  - name: Car
+  - name: Tolls
+  - name: Shopping
+  - name: Health
+  - name: Fitness
+  - name: Subscriptions
+  - name: Entertainment
+  - name: Insurance
+  - name: Utilities
+  - name: Rent
+  - name: Strata
+  - name: Mortgage
+  - name: Transfers
+  - name: Fees & Charges
+  - name: Cash Withdrawal
+  - name: Investments
+  - name: Uncategorized
+
+rules:
+  - type: source
+    source_type: airbnb
+    category: Airbnb Income
+
+  - type: regex
+    pattern: "NAMECHEAP|ICDSOFT|DIGITAL ?OCEAN|CLOUDFLARE"
+    category: "Business: Hosting & Infrastructure"
+  - type: regex
+    pattern: "TWILIO|GOOGLE.?GSUITE|GITHUB|FIGMA|ADOBE"
+    category: "Business: Software & Subscriptions"
+  - type: regex
+    pattern: "SALARY DEPOSIT"
+    category: Salary
+  - type: regex
+    pattern: "INTEREST CREDIT|CREDIT BONUS INTEREST"
+    category: Interest Income
+  - type: regex
+    pattern: "AIRBNB PAYMENTS|PAYONEER"
+    category: Airbnb Income
+  - type: regex
+    pattern: "TRANSFER TO|TRANSFER FROM|BPAY|INTERNAL TRANSFER"
+    category: Transfers
+  - type: regex
+    pattern: "SAVINGS MAXIMISER"
+    category: Transfers
+  - type: regex
+    pattern: "INTEREST CHARGED"
+    category: Fees & Charges
+  - type: regex
+    pattern: "MORTGAGE OFFSET|INTEREST CHARGE"
+    category: Mortgage
+  - type: regex
+    pattern: "WOOLWORTHS|COLES |ALDI"
+    category: Groceries
+  - type: regex
+    pattern: "UBER ?EATS|DOORDASH|MENULOG"
+    category: Eating Out
+  - type: regex
+    pattern: "MCDONALDS|KFC|SUBWAY"
+    category: Eating Out
+  - type: regex
+    pattern: "NETFLIX|SPOTIFY|YOUTUBE"
+    category: Subscriptions
+  - type: regex
+    pattern: "OPAL|UBER TRIP|TAXI"
+    category: Public Transport
+  - type: regex
+    pattern: "^UBER AUSTRALIA|^UBER BV"
+    category: Public Transport
+  - type: regex
+    pattern: "GENERAL CARD DEPOSIT|BANK DEPOSIT TO PAYPAL"
+    category: Transfers
+
+tag_rules:
+  - tag: flight
+    pattern: "JETSTAR|QANTAS|VIRGIN AUSTRALIA"
+  - tag: taxi
+    pattern: "UBER TRIP|UBER AUSTRALIA|TAXI"
+  - tag: train
+    pattern: "OPAL|TRANSPORTFORNSW"
+  - tag: delivery
+    pattern: "UBER ?EATS|DOORDASH|MENULOG"
+  - tag: health-insurance
+    pattern: "MEDIBANK|AMBULANCE"
+  - tag: mobile
+    pattern: "OPTUS|VODAFONE|TPG"
+  - tag: internet
+    pattern: "TPG"
+  - tag: water
+    pattern: "SYDNEY WATER"
+  - tag: biz-hosting
+    pattern: "NAMECHEAP|ICDSOFT|DIGITAL ?OCEAN|CLOUDFLARE"
+  - tag: biz-software
+    pattern: "TWILIO|GOOGLE.?GSUITE|GITHUB|FIGMA|ADOBE"
+  - tag: salary
+    pattern: "SALARY DEPOSIT"
+  - tag: interest
+    pattern: "INTEREST CREDIT|CREDIT BONUS INTEREST"
+  - tag: rental-income
+    pattern: "AIRBNB PAYMENTS|PAYONEER"
+  - tag: mortgage
+    pattern: "MORTGAGE|OFFSET FACILITY|INTEREST CHARGE"
+  - tag: ato-deductible
+    pattern: "TWILIO|NAMECHEAP|ICDSOFT|GOOGLE.?GSUITE|GITHUB|FIGMA|ADOBE"

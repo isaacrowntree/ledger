@@ -1,0 +1,64 @@
+financial_year: 2025
+
+taxpayer:
+  name: "Test User"
+  spouse:
+    name: "Test Spouse"
+    taxable_income: 90000
+
+businesses:
+  - name: "Test Business"
+    abn: "00000000000"
+    activity: "Software Development"
+    split_rules:
+      - category: Utilities
+        tag: internet
+        business_pct: 2
+      - category: Utilities
+        tag: mobile
+        business_pct: 2
+
+rental_properties:
+  - name: "TEST PROPERTY"
+    address: "1 Test St, Sydney NSW 2000"
+    ownership_pct: 50
+    rental_weeks: { 2025: 20 }
+    income_category: "Airbnb Income"
+    expense_mapping:
+      - ato_label: "Body corporate fees"
+        category: "Strata"
+      - ato_label: "Interest on loans"
+        category: "Mortgage"
+      - ato_label: "Water charges"
+        tag: "water"
+      - ato_label: "Repairs and maintenance"
+        category: "Rental: Maintenance"
+
+work_deductions:
+  wfh:
+    rate_per_hour: 0.67
+    entries:
+      2025: { weeks: 48, allocation_pct: 100 }
+
+depreciation_schedules:
+  - name: "Rental capital allowances"
+    property: "TEST PROPERTY"
+    type: "rental"
+    items:
+      - description: "Capital allowances"
+        amount: 100
+        fy: 2025
+  - name: "Business equipment"
+    business: "Test Business"
+    type: "business"
+    items:
+      - description: "Laptop depreciation"
+        amount: 500
+        fy: 2025
+
+manual_entries:
+  2025:
+    - label: "Tax withheld"
+      amount: 50000
+      section: "income"
+      notes: "From payment summary"

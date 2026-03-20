@@ -1,0 +1,18 @@
+[project]
+name = "ledger"
+version = "0.1.0"
+description = "Personal finance tool for ingesting bank statements and tracking spending"
+requires-python = ">=3.11"
+dependencies = [
+    "pdfplumber",
+    "pyyaml",
+    "flask",
+    "flask-cors",
+    "python-dotenv",
+]
+
+[tool.setuptools.packages.find]
+include = ["etl*", "api*"]
+
+[project.scripts]
+ledger = "etl.cli:main"

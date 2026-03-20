@@ -1,0 +1,8 @@
+{
+  "name": "ledger",
+  "private": true,
+  "scripts": {
+    "build:frontend": "cd frontend && npm run build",
+    "dev:frontend": "cd frontend && npm run dev"
+  }
+}

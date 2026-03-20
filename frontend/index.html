@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Ledger</title>
+</head>
+<body>
+  <div id="app">
+    <header>
+      <h1>Ledger</h1>
+      <nav>
+        <button class="tab active" data-tab="dashboard">Dashboard</button>
+        <button class="tab" data-tab="transactions">Transactions</button>
+        <button class="tab" data-tab="budget">Budget</button>
+        <button class="tab" data-tab="trends">Trends</button>
+        <button class="tab" data-tab="year-review">Year Review</button>
+        <button class="tab" data-tab="financial-year">Financial Year</button>
+        <button class="tab" data-tab="tax">ATO Tax</button>
+      </nav>
+    </header>
+
+    <main>
+      <section id="dashboard" class="view active">
+        <div id="net-worth-panel"></div>
+        <div class="filters-bar">
+          <select id="dash-year"></select>
+          <label class="checkbox-label">
+            <input type="checkbox" id="dash-exclude-loans" checked /> Exclude loans
+          </label>
+          <label class="checkbox-label">
+            <input type="checkbox" id="dash-exclude-transfers" checked /> Exclude transfers
+          </label>
+        </div>
+        <div class="charts-grid">
+          <div class="chart-card">
+            <h3>Income vs Expenses</h3>
+            <canvas id="chart-monthly"></canvas>
+          </div>
+          <div class="chart-card">
+            <h3>Spending by Category</h3>
+            <canvas id="chart-category"></canvas>
+          </div>
+        </div>
+        <div class="summary-cards" id="summary-cards"></div>
+        <div id="category-breakdown" class="chart-card" style="margin-top: 1rem;"></div>
+      </section>
+
+      <section id="transactions" class="view">
+        <div class="filters-bar">
+          <input type="date" id="txn-from" />
+          <input type="date" id="txn-to" />
+          <select id="txn-category"><option value="">All Categories</option></select>
+          <select id="txn-account"><option value="">All Accounts</option></select>
+          <input type="text" id="txn-search" placeholder="Search..." />
+        </div>
+        <table id="txn-table">
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Description</th>
+              <th>Amount</th>
+              <th>Category</th>
+              <th>Account</th>
+              <th>Notes</th>
+            </tr>
+          </thead>
+          <tbody id="txn-body"></tbody>
+        </table>
+      </section>
+
+      <section id="budget" class="view">
+        <div class="filters-bar">
+          <input type="month" id="budget-month" />
+        </div>
+        <div id="budget-bars"></div>
+      </section>
+
+      <section id="trends" class="view">
+        <div class="filters-bar">
+          <input type="date" id="trends-from" />
+          <input type="date" id="trends-to" />
+        </div>
+        <div class="chart-card">
+          <canvas id="chart-trends"></canvas>
+        </div>
+      </section>
+
+      <section id="year-review" class="view">
+        <div class="filters-bar">
+          <select id="review-year"></select>
+        </div>
+        <div id="year-review-content"></div>
+      </section>
+
+      <section id="financial-year" class="view">
+        <div class="filters-bar">
+          <select id="ss-fy"></select>
+          <div class="ss-tabs">
+            <button class="ss-tab active" data-sstab="outgoing">Outgoing</button>
+            <button class="ss-tab" data-sstab="incoming">Incoming</button>
+            <button class="ss-tab" data-sstab="rental">Rental</button>
+            <button class="ss-tab" data-sstab="work-trips">Work Trips</button>
+          </div>
+        </div>
+        <div id="ss-outgoing" class="ss-view active"><div id="ss-outgoing-content"></div></div>
+        <div id="ss-incoming" class="ss-view"><div id="ss-incoming-content"></div></div>
+        <div id="ss-rental" class="ss-view"><div id="ss-rental-content"></div></div>
+        <div id="ss-work-trips" class="ss-view"><div id="ss-work-trips-content"></div></div>
+      </section>
+
+      <section id="tax" class="view">
+        <div class="filters-bar">
+          <select id="tax-fy"></select>
+        </div>
+        <div id="tax-summary"></div>
+      </section>
+    </main>
+  </div>
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>

@@ -1,0 +1,268 @@
+categories:
+  # Income
+  - name: Salary
+    is_income: true
+  - name: Airbnb Income
+    is_income: true
+  - name: Freelance Income
+    is_income: true
+  - name: Interest Income
+    is_income: true
+  - name: Other Income
+    is_income: true
+
+  # Business (ATO deductible)
+  - name: "Business: Hosting & Infrastructure"
+  - name: "Business: Software & Subscriptions"
+  - name: "Business: Equipment"
+  - name: "Business: Advertising & Marketing"
+  - name: "Business: Other"
+
+  # Rental Property (ATO deductible)
+  - name: "Rental: Maintenance"
+  - name: "Rental: Other"
+
+  # Housing
+  - name: Rent
+  - name: Utilities
+    budget_monthly: 300
+  - name: Insurance
+  - name: Strata
+
+  # Food & Drink
+  - name: Groceries
+    budget_monthly: 600
+  - name: Eating Out
+    budget_monthly: 300
+  - name: Coffee
+    budget_monthly: 80
+
+  # Transport
+  - name: Public Transport
+    budget_monthly: 150
+  - name: Fuel
+  - name: Car
+  - name: Tolls
+
+  # Shopping
+  - name: Clothing
+  - name: Electronics
+  - name: Home & Garden
+  - name: Shopping
+
+  # Health
+  - name: Health
+    budget_monthly: 200
+  - name: Fitness
+
+  # Entertainment
+  - name: Subscriptions
+    budget_monthly: 100
+  - name: Entertainment
+
+  # Financial
+  - name: Transfers
+  - name: Fees & Charges
+  - name: Cash Withdrawal
+  - name: Investments
+
+  # Mortgage
+  - name: Mortgage
+
+  # Other
+  - name: Uncategorized
+
+# =============================================================================
+# CATEGORY RULES — matched top-to-bottom, first match wins.
+# Types: "source" (match source_type), "regex" (match description)
+# =============================================================================
+rules:
+  # --- Source-based ---
+  - type: source
+    source_type: airbnb
+    category: Airbnb Income
+
+  # --- Business (matched first, before personal) ---
+  - type: regex
+    pattern: "NAMECHEAP|ICDSOFT|DIGITAL ?OCEAN|HEROKU|CLOUDFLARE|AWS |AMAZON WEB SERVICES"
+    category: "Business: Hosting & Infrastructure"
+  - type: regex
+    pattern: "TWILIO|GOOGLE.?GSUITE|GITHUB|GITLAB|JETBRAINS|FIGMA|CANVA|ADOBE|OPENAI|ANTHROPIC"
+    category: "Business: Software & Subscriptions"
+
+  # --- Income ---
+  - type: regex
+    pattern: "SALARY DEPOSIT"
+    category: Salary
+  - type: regex
+    pattern: "INTEREST CREDIT|CREDIT BONUS INTEREST"
+    category: Interest Income
+  - type: regex
+    pattern: "AIRBNB PAYMENTS"
+    category: Airbnb Income
+
+  # --- Transfers ---
+  - type: regex
+    pattern: "TRANSFER TO|TRANSFER FROM|BPAY|INTERNAL TRANSFER"
+    category: Transfers
+
+  # --- Credit card interest (must be BEFORE mortgage) ---
+  - type: regex
+    pattern: "INTEREST CHARGED"
+    category: Fees & Charges
+
+  # --- Mortgage ---
+  - type: regex
+    pattern: "MORTGAGE OFFSET|TRANSFER OFFSET FACILITY|INTEREST CHARGE"
+    category: Mortgage
+
+  # --- Groceries ---
+  - type: regex
+    pattern: "WOOLWORTHS|COLES |ALDI |IGA |HARRIS FARM|COSTCO"
+    category: Groceries
+  - type: regex
+    pattern: "LIQUORLAND|DAN MURPHY|BWS"
+    category: Groceries
+
+  # --- Eating Out ---
+  - type: regex
+    pattern: "UBER ?EATS|DOORDASH|MENULOG|DELIVEROO"
+    category: Eating Out
+  - type: regex
+    pattern: "MCDONALDS|KFC|HUNGRY JACK|SUBWAY |GUZMAN|GYG |DOMINOS|NANDOS|OPORTO|ZAMBRERO"
+    category: Eating Out
+  - type: regex
+    pattern: "CAFE|COFFEE|BAKERY|RESTAURANT|BISTRO|PIZZA|BURGER|SUSHI"
+    category: Eating Out
+
+  # --- Transport ---
+  - type: regex
+    pattern: "OPAL|TRANSPORTFORNSW|UBER TRIP|TAXI"
+    category: Public Transport
+  - type: regex
+    pattern: "^UBER AUSTRALIA|^UBER BV|DIDIMOBILITY"
+    category: Public Transport
+  - type: regex
+    pattern: "JETSTAR|QANTAS|VIRGIN AUSTRALIA"
+    category: Public Transport
+  - type: regex
+    pattern: "BOOKING\\.COM|AIRBNB \\*"
+    category: Public Transport
+
+  # --- Fuel ---
+  - type: regex
+    pattern: "BP |AMPOL|CALTEX|SHELL |7-ELEVEN \\d|EG FUELCO|BUDGET PETROL|UNITED PETROL"
+    category: Fuel
+
+  # --- Car ---
+  - type: regex
+    pattern: "CAR WASH|PARKING|EUROPCAR"
+    category: Car
+  - type: regex
+    pattern: "LINKT|NRMA"
+    category: Car
+
+  # --- Tolls ---
+  - type: regex
+    pattern: "DIRECT DEBIT.*LINKT"
+    category: Tolls
+
+  # --- Subscriptions ---
+  - type: regex
+    pattern: "NETFLIX|SPOTIFY|YOUTUBE|DISNEY|STAN |APPLE\\.COM"
+    category: Subscriptions
+
+  # --- Insurance ---
+  - type: regex
+    pattern: "INSURANCE|MEDIBANK|AMBULANCE"
+    category: Insurance
+
+  # --- Utilities ---
+  - type: regex
+    pattern: "OPTUS|VODAFONE|TPG|ALINTA ENERGY|SYDNEY WATER"
+    category: Utilities
+
+  # --- Rent ---
+  - type: regex
+    pattern: "IPAYRENT"
+    category: Rent
+
+  # --- Health ---
+  - type: regex
+    pattern: "CHEMIST|PHARMACY|PHYSIO|DENTAL|DOCTOR|MEDICAL|CLINIC"
+    category: Health
+  - type: regex
+    pattern: "GYM|FITNESS"
+    category: Fitness
+
+  # --- Shopping ---
+  - type: regex
+    pattern: "BUNNINGS|IKEA|JB HI|REBEL|KMART|OFFICEWORKS"
+    category: Shopping
+  - type: regex
+    pattern: "AMAZON|EBAY"
+    category: Shopping
+
+  # --- Entertainment ---
+  - type: regex
+    pattern: "CINEMA|MOVIE|THEATRE|MUSEUM|ZOO"
+    category: Entertainment
+
+  # --- Cash ---
+  - type: regex
+    pattern: "ATM WITHDRAWAL|CASH WITHDRAWAL"
+    category: Cash Withdrawal
+
+  # --- Fees ---
+  - type: regex
+    pattern: "ANNUAL FEE|BANK CHEQUE|OVERDRAFT"
+    category: Fees & Charges
+
+  # Add your own rules below — more specific patterns should go above generic ones.
+
+# =============================================================================
+# TAG RULES — Multiple tags can match per transaction. Orthogonal to categories.
+# Used for sub-classification and ATO reporting.
+# =============================================================================
+tag_rules:
+  # Transport
+  - tag: flight
+    pattern: "JETSTAR|QANTAS|VIRGIN AUSTRALIA"
+  - tag: taxi
+    pattern: "UBER TRIP|UBER AUSTRALIA|TAXI"
+  - tag: train
+    pattern: "OPAL|TRANSPORTFORNSW"
+  - tag: delivery
+    pattern: "UBER ?EATS|DOORDASH|MENULOG|DELIVEROO"
+
+  # Insurance
+  - tag: health-insurance
+    pattern: "MEDIBANK|AMBULANCE"
+
+  # Utilities
+  - tag: mobile
+    pattern: "OPTUS|VODAFONE|TPG"
+  - tag: internet
+    pattern: "TPG"
+  - tag: water
+    pattern: "SYDNEY WATER"
+
+  # Business
+  - tag: biz-hosting
+    pattern: "NAMECHEAP|ICDSOFT|DIGITAL ?OCEAN|CLOUDFLARE|AWS"
+  - tag: biz-software
+    pattern: "TWILIO|GOOGLE.?GSUITE|GITHUB|FIGMA|ADOBE"
+
+  # Income
+  - tag: salary
+    pattern: "SALARY DEPOSIT"
+  - tag: interest
+    pattern: "INTEREST CREDIT|CREDIT BONUS INTEREST"
+  - tag: rental-income
+    pattern: "AIRBNB PAYMENTS"
+
+  # Property
+  - tag: mortgage
+    pattern: "MORTGAGE|OFFSET FACILITY|INTEREST CHARGE"
+  - tag: strata
+    pattern: "STRATA|BODY CORP"

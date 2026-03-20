@@ -1,0 +1,52 @@
+accounts:
+  # === Everyday / Checking Accounts ===
+  # file_prefix maps statement filenames to accounts (e.g. "my_checking_2025-01.pdf")
+
+  - name: "My Checking Account"
+    source_type: ing            # Parser: ing, paypal, bankwest, hsbc, coles, amex, airbnb
+    currency: AUD
+    account_type: checking      # checking, savings, credit, loan, other
+    file_prefix: my_checking
+
+  - name: "My Savings"
+    source_type: ing
+    currency: AUD
+    account_type: savings
+    file_prefix: my_savings
+
+  # === Credit Cards ===
+  # source_of_truth: true means this account has the detailed transaction data.
+  # payment_patterns: regex patterns that appear on OTHER accounts when paying this card.
+  # This prevents double-counting (ING sees "BPAY COLES MASTERCARD" → auto-marked as transfer).
+
+  - name: "My Credit Card"
+    source_type: bankwest
+    currency: AUD
+    account_type: credit
+    source_of_truth: true
+    payment_patterns:
+      - "MY CREDIT CARD"
+      - "BPAY.*MY CARD"
+
+  # === PayPal ===
+  - name: "PayPal"
+    source_type: paypal
+    currency: AUD
+    account_type: other
+    source_of_truth: true
+    payment_patterns:
+      - "PAYPAL"
+
+  # === Loan / Mortgage ===
+  # - name: "My Mortgage"
+  #   source_type: ing
+  #   currency: AUD
+  #   account_type: loan
+  #   file_prefix: my_mortgage
+
+  # === Airbnb (if using Airbnb CSV parser) ===
+  # - name: "Airbnb"
+  #   source_type: airbnb
+  #   currency: AUD
+  #   account_type: other
+  #   display: 0              # Hide from net worth panel
