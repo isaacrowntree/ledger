@@ -21,6 +21,7 @@ export default defineConfig({
           items: [
             { label: 'Installation', slug: 'installation' },
             { label: 'Getting Started', slug: 'getting-started' },
+            { label: 'Ingestion methods', slug: 'ingestion' },
           ],
         },
         {
