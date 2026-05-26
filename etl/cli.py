@@ -19,6 +19,8 @@ from etl.parsers.ing_pdf import INGPDFParser
 from etl.parsers.paypal_csv import PayPalCSVParser
 from etl import basiq
 from etl.splitter import load_tax_config, backfill_splits
+from etl.dedup import find_duplicates, resolve_duplicates
+from etl import rental
 
 PROJECT_ROOT = Path(__file__).parent.parent
 STAGING_DIR = PROJECT_ROOT / "staging"
@@ -97,6 +99,19 @@ def main():
     tax_parser = sub.add_parser("tax", help="Show ATO tax summary")
     tax_parser.add_argument("--fy", type=int, help="Financial year (e.g. 2025 for FY 2024-25)")
 
+    dedup_parser = sub.add_parser("dedup", help="Find and resolve cross-account duplicate transactions")
+    dedup_parser.add_argument("--dry-run", action="store_true", help="Preview without writing to DB")
+
+    tag_parser = sub.add_parser("tag", help="Bulk tag/recategorize transactions matching a description pattern")
+    tag_parser.add_argument("--pattern", required=True, help="SQL LIKE pattern matched against description (case-insensitive)")
+    tag_parser.add_argument("--from", dest="date_from", help="Start date YYYY-MM-DD")
+    tag_parser.add_argument("--to", dest="date_to", help="End date YYYY-MM-DD")
+    tag_parser.add_argument("--fy", type=int, help="Financial year (alternative to --from/--to)")
+    tag_parser.add_argument("--tag", help="Tag to add")
+    tag_parser.add_argument("--category", help="Category to set")
+    tag_parser.add_argument("--clear-transfer", action="store_true", help="Also clear is_transfer flag")
+    tag_parser.add_argument("--dry-run", action="store_true", help="Preview matches without writing")
+
     args = parser.parse_args()
 
     if args.command == "init":
@@ -111,6 +126,15 @@ def main():
         cmd_split(backfill=args.backfill, fy=args.fy)
     elif args.command == "tax":
         cmd_tax(fy=args.fy)
+    elif args.command == "dedup":
+        cmd_dedup(dry_run=args.dry_run)
+    elif args.command == "tag":
+        cmd_tag(
+            pattern=args.pattern,
+            date_from=args.date_from, date_to=args.date_to, fy=args.fy,
+            tag=args.tag, category=args.category,
+            clear_transfer=args.clear_transfer, dry_run=args.dry_run,
+        )
     else:
         parser.print_help()
         sys.exit(1)
@@ -187,6 +211,86 @@ def cmd_ingest(source: str | None = None, dry_run: bool = False):
     conn.close()
 
     print(f"\nDone. Total inserted: {total_inserted}, Total skipped: {total_skipped}")
+
+
+def cmd_dedup(dry_run: bool = False):
+    """Find and resolve cross-account duplicate transactions."""
+    conn = db.get_connection()
+    db.init_db(conn)
+
+    dupes = find_duplicates(conn)
+    print(f"Found {len(dupes)} duplicate pairs")
+
+    if not dupes:
+        conn.close()
+        return
+
+    updated = resolve_duplicates(conn, dupes, dry_run=dry_run)
+    action = "Would mark" if dry_run else "Marked"
+    print(f"\n{action} {updated} transactions as transfers")
+    conn.close()
+
+
+def cmd_tag(
+    pattern: str,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    fy: int | None = None,
+    tag: str | None = None,
+    category: str | None = None,
+    clear_transfer: bool = False,
+    dry_run: bool = False,
+):
+    """Bulk tag/recategorize transactions matching a description pattern."""
+    if not tag and not category and not clear_transfer:
+        print("Specify at least one of --tag / --category / --clear-transfer")
+        sys.exit(1)
+
+    if fy:
+        date_from = f"{fy - 1}-07-01"
+        date_to = f"{fy}-06-30"
+
+    conn = db.get_connection()
+    db.init_db(conn)
+
+    query = "SELECT t.id, t.date, t.amount, t.description, c.name AS cat FROM transactions t LEFT JOIN categories c ON c.id=t.category_id WHERE UPPER(t.description) LIKE UPPER(?)"
+    params: list = [f"%{pattern}%"]
+    if date_from:
+        query += " AND t.date >= ?"
+        params.append(date_from)
+    if date_to:
+        query += " AND t.date <= ?"
+        params.append(date_to)
+    query += " ORDER BY t.date"
+    rows = conn.execute(query, params).fetchall()
+
+    print(f"Matched {len(rows)} transactions:")
+    for r in rows:
+        print(f"  {r['date']} ${r['amount']:>10.2f} [{r['cat'] or '-'}] {r['description'][:60]}")
+
+    if dry_run or not rows:
+        return
+
+    cat_id = None
+    if category:
+        cat_id = db.get_category_id(conn, category)
+        if cat_id is None:
+            print(f"Unknown category: {category}")
+            sys.exit(1)
+
+    for r in rows:
+        if cat_id is not None:
+            conn.execute("UPDATE transactions SET category_id=? WHERE id=?", (cat_id, r["id"]))
+        if clear_transfer:
+            conn.execute("UPDATE transactions SET is_transfer=0 WHERE id=?", (r["id"],))
+        if tag:
+            conn.execute(
+                "INSERT OR IGNORE INTO transaction_tags(transaction_id, tag) VALUES (?, ?)",
+                (r["id"], tag),
+            )
+    conn.commit()
+    conn.close()
+    print(f"\nApplied: tag={tag} category={category} clear_transfer={clear_transfer}")
 
 
 def cmd_connect():
@@ -403,6 +507,11 @@ def cmd_tax(fy: int | None = None):
         print("\nMANUAL ENTRIES:")
         for entry in manual:
             print(f"  {entry['label']:30s} ${entry['amount']:>12,.2f}")
+
+    # Rental property allocator
+    rental_results = rental.compute_rental_deductions(conn, tax_config, effective_fy)
+    if rental_results:
+        print(rental.format_summary(rental_results))
 
     conn.close()
 
