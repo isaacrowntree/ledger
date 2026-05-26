@@ -16,7 +16,9 @@
         <button class="tab" data-tab="trends">Trends</button>
         <button class="tab" data-tab="year-review">Year Review</button>
         <button class="tab" data-tab="financial-year">Financial Year</button>
+        <button class="tab" data-tab="shared-expenses">Shared Expenses</button>
         <button class="tab" data-tab="tax">ATO Tax</button>
+        <button class="tab" data-tab="economics">Economics</button>
       </nav>
     </header>
 
@@ -63,6 +65,7 @@
               <th>Category</th>
               <th>Account</th>
               <th>Notes</th>
+              <th></th>
             </tr>
           </thead>
           <tbody id="txn-body"></tbody>
@@ -109,11 +112,43 @@
         <div id="ss-work-trips" class="ss-view"><div id="ss-work-trips-content"></div></div>
       </section>
 
+      <section id="shared-expenses" class="view">
+        <div class="shared-summary" id="shared-summary"></div>
+        <div class="filters-bar">
+          <label class="checkbox-label">
+            <input type="checkbox" id="shared-hide-settled" /> Hide settled
+          </label>
+        </div>
+        <table id="shared-table">
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Description</th>
+              <th>Full Amount</th>
+              <th>Split %</th>
+              <th>Owed</th>
+              <th>Category</th>
+              <th>Settled</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="shared-body"></tbody>
+        </table>
+      </section>
+
       <section id="tax" class="view">
         <div class="filters-bar">
           <select id="tax-fy"></select>
         </div>
         <div id="tax-summary"></div>
+      </section>
+
+      <section id="economics" class="view">
+        <div class="filters-bar">
+          <select id="econ-year"></select>
+          <button id="econ-sync-cpi" class="btn-secondary">Sync CPI Data</button>
+        </div>
+        <div id="econ-content"></div>
       </section>
     </main>
   </div>

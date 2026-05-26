@@ -241,6 +241,86 @@ export interface ATOReturn {
   spouse: { name: string; taxable_income: number };
 }
 
+async function post<T>(path: string, body: Record<string, unknown>): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  return res.json();
+}
+
+async function del<T>(path: string): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, { method: "DELETE" });
+  return res.json();
+}
+
+export interface SharedExpenseItem {
+  id: number;
+  transaction_id: number;
+  split_pct: number;
+  is_settled: number;
+  settled_date: string | null;
+  date: string;
+  description: string;
+  amount: number;
+  notes: string | null;
+  category_name: string | null;
+  account_name: string | null;
+  share_amount: number;
+}
+
+export interface SharedExpensesResponse {
+  items: SharedExpenseItem[];
+  total_shared: number;
+  total_settled: number;
+  balance_owing: number;
+}
+
+export interface EconomicsSummary {
+  year: string;
+  cpi: {
+    current_index: number | null;
+    yoy_change: number | null;
+    base_year_index: number | null;
+    base_year: string;
+  };
+  spending_power: {
+    salary: number;
+    salary_real: number | null;
+    salary_real_prev_year: number | null;
+    purchasing_power_loss: number | null;
+    monthly_expenses_nominal: number;
+    monthly_expenses_real: number | null;
+    real_savings_rate: number | null;
+  };
+  tax_analysis: {
+    gross_income: number;
+    taxable_income: number;
+    payg: number;
+    medicare: number;
+    total_tax: number;
+    effective_rate: number;
+    after_tax: number;
+    after_tax_real: number | null;
+    tax_breakdown: { category: string; amount: number; pct: number }[];
+  };
+  inflation_adjusted_spending: {
+    category: string;
+    nominal: number;
+    real: number | null;
+    real_prev_year: number | null;
+    real_change_pct: number | null;
+  }[];
+  net_worth: {
+    nominal: number;
+    real: number | null;
+    real_prev_year: number | null;
+    real_change_pct: number | null;
+  };
+  cpi_history: { period: string; index_value: number; pct_change_yoy: number | null }[];
+}
+
 export const api = {
   transactions: (params?: Record<string, string>) =>
     get<Transaction[]>(`${BASE}/transactions`, params),
@@ -292,4 +372,25 @@ export const api = {
 
   updateSplit: (txnId: number, data: { business_name: string; business_pct: number }) =>
     patch<{ ok: boolean }>(`/transactions/${txnId}/split`, data),
+
+  sharedExpenses: () =>
+    get<SharedExpensesResponse>(`${BASE}/shared-expenses`),
+
+  addSharedExpense: (transactionId: number, splitPct?: number) =>
+    post<{ ok: boolean }>("/shared-expenses", {
+      transaction_id: transactionId,
+      ...(splitPct !== undefined ? { split_pct: splitPct } : {}),
+    }),
+
+  updateSharedExpense: (id: number, data: { is_settled?: boolean; split_pct?: number }) =>
+    patch<{ ok: boolean }>(`/shared-expenses/${id}`, data),
+
+  deleteSharedExpense: (id: number) =>
+    del<{ ok: boolean }>(`/shared-expenses/${id}`),
+
+  economicsSummary: (year?: string) =>
+    get<EconomicsSummary>(`${BASE}/summary/economics`, year ? { year } : undefined),
+
+  syncCpi: () =>
+    post<{ ok: boolean; rows_synced: number }>("/cpi/sync", {}),
 };
