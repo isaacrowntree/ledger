@@ -5,6 +5,9 @@ from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 
 from etl import db
+from etl.cpi import sync_cpi, get_cpi_for_year, get_cpi_history, get_latest_cpi, adjust_for_inflation
+from etl.dedup import find_duplicates, resolve_duplicates
+from etl.tax_calc import calculate_total_tax, get_tax_dollar_breakdown
 from etl.splitter import load_tax_config
 
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -328,6 +331,17 @@ def api_budget_vs_actual():
 
     exclude_loans = request.args.get("exclude_loans", "true").lower() == "true"
     exclude_transfers = request.args.get("exclude_transfers", "true").lower() == "true"
+    cpi_adjust = request.args.get("cpi_adjust", "false").lower() == "true"
+
+    # CPI adjustment: scale budgets from a base period to the current month
+    cpi_multiplier = 1.0
+    if cpi_adjust:
+        from datetime import date as date_type
+        year_int = int(month.split("-")[0])
+        current_cpi = get_cpi_for_year(conn, year_int)
+        base_cpi = get_cpi_for_year(conn, 2022)  # Budget base year
+        if current_cpi and base_cpi and base_cpi > 0:
+            cpi_multiplier = current_cpi / base_cpi
 
     results = []
     for cat in categories:
@@ -346,11 +360,14 @@ def api_budget_vs_actual():
 
         actual_row = conn.execute(query, query_params).fetchone()
 
+        budget = round(cat["budget_monthly"] * cpi_multiplier, 2)
         results.append({
             "category": cat["name"],
-            "budget": cat["budget_monthly"],
+            "budget": budget,
+            "budget_original": cat["budget_monthly"],
+            "cpi_adjusted": cpi_adjust and cpi_multiplier != 1.0,
             "actual": abs(actual_row["actual"]),
-            "remaining": cat["budget_monthly"] - abs(actual_row["actual"]),
+            "remaining": budget - abs(actual_row["actual"]),
             "is_income": bool(cat["is_income"]),
         })
 
@@ -1079,6 +1096,259 @@ def api_ato_return():
     })
 
 
+# --- Economics / CPI Endpoints ---
+
+@app.route("/api/dedup", methods=["POST"])
+def api_dedup():
+    """Find and resolve cross-account duplicate transactions."""
+    conn = get_conn()
+    try:
+        dupes = find_duplicates(conn)
+        updated = resolve_duplicates(conn, dupes)
+        conn.close()
+        return jsonify({"ok": True, "duplicates_found": len(dupes), "resolved": updated})
+    except Exception as e:
+        conn.close()
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/cpi/sync", methods=["POST"])
+def api_cpi_sync():
+    """Fetch latest CPI data from ABS and store in DB."""
+    conn = get_conn()
+    try:
+        count = sync_cpi(conn)
+        conn.close()
+        return jsonify({"ok": True, "rows_synced": count})
+    except Exception as e:
+        conn.close()
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/cpi")
+def api_cpi():
+    """Return CPI history."""
+    conn = get_conn()
+    from_year = int(request.args.get("from_year", 2015))
+    history = get_cpi_history(conn, from_year)
+    latest = get_latest_cpi(conn)
+    conn.close()
+    return jsonify({"history": history, "latest": latest})
+
+
+@app.route("/api/summary/economics")
+def api_summary_economics():
+    """Spending power, tax analysis, inflation-adjusted spending, real vs nominal net worth."""
+    from datetime import date as date_type
+
+    conn = get_conn()
+    year = int(request.args.get("year", date_type.today().year))
+
+    # Ensure CPI data exists
+    latest_cpi = get_latest_cpi(conn)
+    if not latest_cpi:
+        try:
+            sync_cpi(conn)
+            latest_cpi = get_latest_cpi(conn)
+        except Exception:
+            pass
+
+    # --- CPI data ---
+    current_cpi = get_cpi_for_year(conn, year)
+    prev_cpi = get_cpi_for_year(conn, year - 1)
+    base_year = 2012
+    base_cpi = get_cpi_for_year(conn, base_year)
+    cpi_history = get_cpi_history(conn, 2015)
+
+    yoy_change = None
+    if current_cpi and prev_cpi and prev_cpi > 0:
+        yoy_change = round((current_cpi - prev_cpi) / prev_cpi * 100, 1)
+
+    # --- Income (salary) for the year ---
+    salary_row = conn.execute("""
+        SELECT COALESCE(SUM(t.amount), 0) as total
+        FROM transactions t
+        JOIN categories c ON t.category_id = c.id
+        WHERE c.name = 'Salary' AND strftime('%Y', t.date) = ?
+    """, (str(year),)).fetchone()
+    salary = salary_row["total"] if salary_row else 0
+
+    prev_salary_row = conn.execute("""
+        SELECT COALESCE(SUM(t.amount), 0) as total
+        FROM transactions t
+        JOIN categories c ON t.category_id = c.id
+        WHERE c.name = 'Salary' AND strftime('%Y', t.date) = ?
+    """, (str(year - 1),)).fetchone()
+    prev_salary = prev_salary_row["total"] if prev_salary_row else 0
+
+    # --- Total expenses for the year ---
+    expense_row = conn.execute("""
+        SELECT COALESCE(SUM(t.amount), 0) as total
+        FROM transactions t
+        JOIN accounts a ON t.account_id = a.id
+        WHERE t.amount < 0 AND strftime('%Y', t.date) = ?
+          AND t.is_transfer = 0 AND a.account_type NOT IN ('loan')
+    """, (str(year),)).fetchone()
+    total_expenses = abs(expense_row["total"]) if expense_row else 0
+
+    # --- Monthly expenses ---
+    month_count_row = conn.execute("""
+        SELECT COUNT(DISTINCT strftime('%Y-%m', t.date)) as months
+        FROM transactions t WHERE t.amount < 0 AND strftime('%Y', t.date) = ?
+    """, (str(year),)).fetchone()
+    active_months = month_count_row["months"] if month_count_row else 1
+    monthly_expenses_nominal = total_expenses / max(active_months, 1)
+
+    # --- Real (inflation-adjusted) values ---
+    salary_real = None
+    salary_real_prev = None
+    purchasing_power_loss = None
+    monthly_expenses_real = None
+
+    if current_cpi and base_cpi and base_cpi > 0:
+        deflator = base_cpi / current_cpi
+        salary_real = round(salary * deflator, 2)
+        monthly_expenses_real = round(monthly_expenses_nominal * deflator, 2)
+        purchasing_power_loss = round((1 - deflator) * 100, 1)
+
+        if prev_cpi and prev_cpi > 0:
+            prev_deflator = base_cpi / prev_cpi
+            salary_real_prev = round(prev_salary * prev_deflator, 2)
+
+    # --- Tax analysis ---
+    # Use FY that overlaps with calendar year (FY ending in year, e.g. year=2025 → FY 2024-25)
+    fy = year
+    tax_result = calculate_total_tax(salary, fy)
+    tax_breakdown = get_tax_dollar_breakdown(tax_result["total_tax"])
+
+    after_tax_real = None
+    if current_cpi and base_cpi and base_cpi > 0:
+        after_tax_real = round(tax_result["after_tax"] * (base_cpi / current_cpi), 2)
+
+    # Real savings rate
+    after_tax = tax_result["after_tax"]
+    real_savings_rate = None
+    if after_tax > 0:
+        real_savings_rate = round((after_tax - total_expenses) / after_tax * 100, 1)
+
+    # --- Inflation-adjusted spending by category ---
+    cat_rows = conn.execute("""
+        SELECT c.name as category, SUM(t.amount) as total
+        FROM transactions t
+        JOIN categories c ON t.category_id = c.id
+        JOIN accounts a ON t.account_id = a.id
+        WHERE t.amount < 0 AND strftime('%Y', t.date) = ?
+          AND t.is_transfer = 0 AND a.account_type NOT IN ('loan')
+          AND c.name != 'Uncategorized'
+        GROUP BY c.name
+        ORDER BY total ASC
+    """, (str(year),)).fetchall()
+
+    prev_cat_rows = conn.execute("""
+        SELECT c.name as category, SUM(t.amount) as total
+        FROM transactions t
+        JOIN categories c ON t.category_id = c.id
+        JOIN accounts a ON t.account_id = a.id
+        WHERE t.amount < 0 AND strftime('%Y', t.date) = ?
+          AND t.is_transfer = 0 AND a.account_type NOT IN ('loan')
+          AND c.name != 'Uncategorized'
+        GROUP BY c.name
+    """, (str(year - 1),)).fetchall()
+    prev_cat_lookup = {r["category"]: abs(r["total"]) for r in prev_cat_rows}
+
+    inflation_adjusted_spending = []
+    for row in cat_rows:
+        nominal = abs(row["total"])
+        real_val = None
+        real_prev = prev_cat_lookup.get(row["category"])
+        real_change_pct = None
+
+        if current_cpi and base_cpi and base_cpi > 0:
+            real_val = round(nominal * (base_cpi / current_cpi), 2)
+
+        if real_prev is not None and prev_cpi and base_cpi and base_cpi > 0:
+            real_prev_adj = round(real_prev * (base_cpi / prev_cpi), 2)
+            if real_prev_adj > 0 and real_val is not None:
+                real_change_pct = round((real_val - real_prev_adj) / real_prev_adj * 100, 1)
+            real_prev = round(real_prev_adj, 2)
+
+        inflation_adjusted_spending.append({
+            "category": row["category"],
+            "nominal": round(nominal, 2),
+            "real": real_val,
+            "real_prev_year": real_prev,
+            "real_change_pct": real_change_pct,
+        })
+
+    # --- Net worth (nominal) ---
+    accounts_data = conn.execute("""
+        SELECT a.account_type,
+               COALESCE((SELECT SUM(t2.amount) FROM transactions t2 WHERE t2.account_id = a.id), 0) as balance
+        FROM accounts a WHERE a.display = 1
+    """).fetchall()
+    holdings_data = conn.execute("SELECT current_value FROM holdings").fetchall()
+
+    nominal_nw = sum(r["balance"] for r in accounts_data) + sum(
+        (r["current_value"] or 0) for r in holdings_data
+    )
+    real_nw = None
+    if current_cpi and base_cpi and base_cpi > 0:
+        real_nw = round(nominal_nw * (base_cpi / current_cpi), 2)
+
+    # Previous year net worth (approximate from transactions up to end of prev year)
+    prev_accounts = conn.execute("""
+        SELECT COALESCE(SUM(t.amount), 0) as total
+        FROM transactions t
+        JOIN accounts a ON t.account_id = a.id
+        WHERE t.date <= ? AND a.display = 1
+    """, (f"{year - 1}-12-31",)).fetchone()
+    prev_nominal_nw = prev_accounts["total"] if prev_accounts else 0
+    # Add holdings (use current values as approximation)
+    prev_nominal_nw += sum((r["current_value"] or 0) for r in holdings_data)
+    prev_real_nw = None
+    if prev_cpi and base_cpi and base_cpi > 0:
+        prev_real_nw = round(prev_nominal_nw * (base_cpi / prev_cpi), 2)
+
+    real_nw_change = None
+    if real_nw is not None and prev_real_nw and prev_real_nw != 0:
+        real_nw_change = round((real_nw - prev_real_nw) / abs(prev_real_nw) * 100, 1)
+
+    conn.close()
+
+    return jsonify({
+        "year": str(year),
+        "cpi": {
+            "current_index": round(current_cpi, 1) if current_cpi else None,
+            "yoy_change": yoy_change,
+            "base_year_index": round(base_cpi, 1) if base_cpi else None,
+            "base_year": str(base_year),
+        },
+        "spending_power": {
+            "salary": round(salary, 2),
+            "salary_real": salary_real,
+            "salary_real_prev_year": salary_real_prev,
+            "purchasing_power_loss": purchasing_power_loss,
+            "monthly_expenses_nominal": round(monthly_expenses_nominal, 2),
+            "monthly_expenses_real": monthly_expenses_real,
+            "real_savings_rate": real_savings_rate,
+        },
+        "tax_analysis": {
+            "gross_income": round(salary, 2),
+            **tax_result,
+            "after_tax_real": after_tax_real,
+            "tax_breakdown": tax_breakdown,
+        },
+        "inflation_adjusted_spending": inflation_adjusted_spending,
+        "net_worth": {
+            "nominal": round(nominal_nw, 2),
+            "real": real_nw,
+            "real_prev_year": prev_real_nw,
+            "real_change_pct": real_nw_change,
+        },
+        "cpi_history": cpi_history,
+    })
+
+
 # --- Supporting CRUD Endpoints ---
 
 @app.route("/api/transactions/<int:txn_id>/split", methods=["PATCH"])
@@ -1197,6 +1467,97 @@ def api_create_tax_override():
 def api_delete_tax_override(override_id: int):
     conn = get_conn()
     conn.execute("DELETE FROM tax_overrides WHERE id = ?", (override_id,))
+    conn.commit()
+    conn.close()
+    return jsonify({"ok": True})
+
+
+# --- Shared Expenses ---
+
+@app.route("/api/shared-expenses")
+def api_shared_expenses():
+    conn = get_conn()
+    rows = conn.execute("""
+        SELECT se.id, se.transaction_id, se.split_pct, se.is_settled, se.settled_date,
+               t.date, t.description, t.amount, t.notes,
+               c.name as category_name, a.name as account_name
+        FROM shared_expenses se
+        JOIN transactions t ON se.transaction_id = t.id
+        LEFT JOIN categories c ON t.category_id = c.id
+        LEFT JOIN accounts a ON t.account_id = a.id
+        ORDER BY t.date DESC, t.id DESC
+    """).fetchall()
+
+    items = []
+    total_shared = 0.0
+    total_settled = 0.0
+    for r in rows:
+        d = dict(r)
+        share_amount = abs(d["amount"]) * (d["split_pct"] / 100.0)
+        d["share_amount"] = round(share_amount, 2)
+        total_shared += share_amount
+        if d["is_settled"]:
+            total_settled += share_amount
+        items.append(d)
+
+    conn.close()
+    return jsonify({
+        "items": items,
+        "total_shared": round(total_shared, 2),
+        "total_settled": round(total_settled, 2),
+        "balance_owing": round(total_shared - total_settled, 2),
+    })
+
+
+@app.route("/api/shared-expenses", methods=["POST"])
+def api_add_shared_expense():
+    conn = get_conn()
+    data = request.get_json()
+    txn_id = data["transaction_id"]
+    split_pct = data.get("split_pct", 50.0)
+    try:
+        conn.execute(
+            "INSERT INTO shared_expenses (transaction_id, split_pct) VALUES (?, ?)",
+            (txn_id, split_pct),
+        )
+        conn.commit()
+        conn.close()
+        return jsonify({"ok": True})
+    except Exception as e:
+        conn.close()
+        return jsonify({"error": str(e)}), 400
+
+
+@app.route("/api/shared-expenses/<int:se_id>", methods=["PATCH"])
+def api_update_shared_expense(se_id: int):
+    conn = get_conn()
+    data = request.get_json()
+
+    if "is_settled" in data:
+        settled_date = None
+        if data["is_settled"]:
+            from datetime import date
+            settled_date = date.today().isoformat()
+        conn.execute(
+            "UPDATE shared_expenses SET is_settled = ?, settled_date = ? WHERE id = ?",
+            (int(data["is_settled"]), settled_date, se_id),
+        )
+
+    if "split_pct" in data:
+        conn.execute(
+            "UPDATE shared_expenses SET split_pct = ? WHERE id = ?",
+            (data["split_pct"], se_id),
+        )
+
+    conn.commit()
+    conn.close()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/shared-expenses/<int:se_id>", methods=["DELETE"])
+def api_delete_shared_expense(se_id: int):
+    conn = get_conn()
+    conn.execute("DELETE FROM shared_expenses WHERE id = ?", (se_id,))
     conn.commit()
     conn.close()
     return jsonify({"ok": True})

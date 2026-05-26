@@ -1,5 +1,5 @@
 import { Chart, registerables } from "chart.js";
-import type { MonthlySummary, CategorySummary, TrendPoint } from "./api";
+import type { MonthlySummary, CategorySummary, TrendPoint, EconomicsSummary } from "./api";
 
 Chart.register(...registerables);
 
@@ -20,6 +20,8 @@ function fmtDollarShort(v: number): string {
 let monthlyChart: Chart | null = null;
 let categoryChart: Chart | null = null;
 let trendsChart: Chart | null = null;
+let taxBreakdownChart: Chart | null = null;
+let cpiHistoryChart: Chart | null = null;
 
 export function renderMonthlyChart(canvas: HTMLCanvasElement, data: MonthlySummary[]) {
   if (monthlyChart) monthlyChart.destroy();
@@ -134,6 +136,92 @@ export function renderTrendsChart(canvas: HTMLCanvasElement, data: TrendPoint[])
         y: {
           beginAtZero: true,
           ticks: { callback: (v) => fmtDollarShort(Number(v)) },
+        },
+      },
+    },
+  });
+}
+
+export function renderTaxBreakdownChart(
+  canvas: HTMLCanvasElement,
+  breakdown: EconomicsSummary["tax_analysis"]["tax_breakdown"]
+) {
+  if (taxBreakdownChart) taxBreakdownChart.destroy();
+
+  taxBreakdownChart = new Chart(canvas, {
+    type: "doughnut",
+    data: {
+      labels: breakdown.map((d) => d.category),
+      datasets: [
+        {
+          data: breakdown.map((d) => d.amount),
+          backgroundColor: COLORS.slice(0, breakdown.length),
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      plugins: {
+        legend: { position: "right", labels: { font: { size: 11 } } },
+        tooltip: {
+          callbacks: {
+            label: (ctx) => {
+              const item = breakdown[ctx.dataIndex];
+              return ` ${item.category}: ${fmtDollar(item.amount)} (${item.pct}%)`;
+            },
+          },
+        },
+      },
+    },
+  });
+}
+
+export function renderCpiHistoryChart(
+  canvas: HTMLCanvasElement,
+  history: EconomicsSummary["cpi_history"]
+) {
+  if (cpiHistoryChart) cpiHistoryChart.destroy();
+
+  cpiHistoryChart = new Chart(canvas, {
+    type: "line",
+    data: {
+      labels: history.map((d) => d.period),
+      datasets: [
+        {
+          label: "CPI Index",
+          data: history.map((d) => d.index_value),
+          borderColor: "#6366f1",
+          backgroundColor: "rgba(99, 102, 241, 0.15)",
+          fill: true,
+          tension: 0.3,
+          pointRadius: 2,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: (ctx) => {
+              const item = history[ctx.dataIndex];
+              const yoy = item.pct_change_yoy != null ? ` (${item.pct_change_yoy.toFixed(1)}% YoY)` : "";
+              return `CPI: ${Number(ctx.raw).toFixed(1)}${yoy}`;
+            },
+          },
+        },
+      },
+      scales: {
+        y: { ticks: { callback: (v) => Number(v).toFixed(0) } },
+        x: {
+          ticks: {
+            maxTicksLimit: 12,
+            callback: function (_, index) {
+              const label = history[index]?.period;
+              return label?.endsWith("-Q1") ? label.replace("-Q1", "") : "";
+            },
+          },
         },
       },
     },

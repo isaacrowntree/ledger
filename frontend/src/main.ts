@@ -1,5 +1,5 @@
-import { api, type Transaction, type Category, type AccountSummary, type Holding, type TaxSummary, type ATOReturn } from "./api";
-import { renderMonthlyChart, renderCategoryChart, renderTrendsChart } from "./charts";
+import { api, type Transaction, type Category, type AccountSummary, type Holding, type TaxSummary, type ATOReturn, type SharedExpenseItem, type SharedExpensesResponse, type EconomicsSummary } from "./api";
+import { renderMonthlyChart, renderCategoryChart, renderTrendsChart, renderTaxBreakdownChart, renderCpiHistoryChart } from "./charts";
 import { populateFilters, getTransactionFilters } from "./filters";
 import { initSpreadsheet, loadSpreadsheet } from "./spreadsheet";
 import "./style.css";
@@ -35,8 +35,12 @@ async function loadView(view: string) {
       return loadYearReview();
     case "financial-year":
       return loadSpreadsheet();
+    case "shared-expenses":
+      return loadSharedExpenses();
     case "tax":
       return loadTax();
+    case "economics":
+      return loadEconomics();
   }
 }
 
@@ -526,6 +530,281 @@ function renderYearReview(data: import("./api").YearReview) {
   `;
 }
 
+// --- Shared Expenses Tab ---
+
+async function loadSharedExpenses() {
+  const data = await api.sharedExpenses();
+  renderSharedSummary(data);
+  renderSharedTable(data.items);
+}
+
+function renderSharedSummary(data: SharedExpensesResponse) {
+  const el = document.getElementById("shared-summary")!;
+  el.innerHTML = `
+    <div class="summary-cards">
+      <div class="card expense">
+        <div class="card-label">Total Owed</div>
+        <div class="card-value">$${fmt(data.total_shared)}</div>
+      </div>
+      <div class="card income">
+        <div class="card-label">Total Settled</div>
+        <div class="card-value">$${fmt(data.total_settled)}</div>
+      </div>
+      <div class="card ${data.balance_owing > 0 ? "expense" : "income"}">
+        <div class="card-label">Balance Owing</div>
+        <div class="card-value">$${fmt(data.balance_owing)}</div>
+      </div>
+    </div>
+  `;
+}
+
+function renderSharedTable(items: SharedExpenseItem[]) {
+  const hideSettled = (document.getElementById("shared-hide-settled") as HTMLInputElement)?.checked;
+  const filtered = hideSettled ? items.filter((i) => !i.is_settled) : items;
+  const tbody = document.getElementById("shared-body")!;
+
+  tbody.innerHTML = filtered
+    .map((item) => `
+      <tr class="${item.is_settled ? "settled-row" : ""}">
+        <td>${item.date}</td>
+        <td>${escapeHtml(item.description)}</td>
+        <td class="negative">$${fmt(Math.abs(item.amount))}</td>
+        <td>
+          <input type="number" class="split-input" data-id="${item.id}"
+            value="${item.split_pct}" min="0" max="100" step="5" />%
+        </td>
+        <td class="negative">$${fmt(item.share_amount)}</td>
+        <td>${escapeHtml(item.category_name || "")}</td>
+        <td>
+          <input type="checkbox" class="settled-check" data-id="${item.id}"
+            ${item.is_settled ? "checked" : ""} />
+        </td>
+        <td>
+          <button class="remove-shared-btn" data-id="${item.id}" title="Remove from shared">&times;</button>
+        </td>
+      </tr>
+    `)
+    .join("");
+
+  tbody.querySelectorAll<HTMLInputElement>(".settled-check").forEach((cb) => {
+    cb.addEventListener("change", async () => {
+      const id = Number(cb.dataset.id);
+      await api.updateSharedExpense(id, { is_settled: cb.checked });
+      await loadSharedExpenses();
+    });
+  });
+
+  tbody.querySelectorAll<HTMLInputElement>(".split-input").forEach((input) => {
+    input.addEventListener("change", async () => {
+      const id = Number(input.dataset.id);
+      const pct = parseFloat(input.value);
+      if (pct >= 0 && pct <= 100) {
+        await api.updateSharedExpense(id, { split_pct: pct });
+        await loadSharedExpenses();
+      }
+    });
+  });
+
+  tbody.querySelectorAll<HTMLButtonElement>(".remove-shared-btn").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const id = Number(btn.dataset.id);
+      await api.deleteSharedExpense(id);
+      await loadSharedExpenses();
+    });
+  });
+}
+
+// --- Economics Tab ---
+
+async function loadEconomics() {
+  const year = (document.getElementById("econ-year") as HTMLSelectElement)?.value ||
+    String(new Date().getFullYear());
+  const data = await api.economicsSummary(year);
+  renderEconomics(data);
+}
+
+function renderEconomics(data: EconomicsSummary) {
+  const el = document.getElementById("econ-content")!;
+  const sp = data.spending_power;
+  const tax = data.tax_analysis;
+  const nw = data.net_worth;
+  const cpi = data.cpi;
+
+  const hasCpi = cpi.current_index != null;
+  const noCpiMsg = `<p class="econ-notice">No CPI data loaded. Click "Sync CPI Data" to fetch from ABS.</p>`;
+
+  el.innerHTML = `
+    ${!hasCpi ? noCpiMsg : ""}
+
+    <h2>${data.year} Economics</h2>
+
+    <!-- Summary cards -->
+    <div class="summary-cards econ-cards">
+      <div class="card income">
+        <div class="card-label">Gross Salary</div>
+        <div class="card-value">$${fmt(sp.salary)}</div>
+        ${sp.salary_real != null ? `<div class="card-sub">Real (${cpi.base_year}$): $${fmt(sp.salary_real)}</div>` : ""}
+      </div>
+      <div class="card expense">
+        <div class="card-label">Total Tax</div>
+        <div class="card-value">$${fmt(tax.total_tax)}</div>
+        <div class="card-sub">${tax.effective_rate}% effective rate</div>
+      </div>
+      <div class="card">
+        <div class="card-label">After-Tax Income</div>
+        <div class="card-value">$${fmt(tax.after_tax)}</div>
+        ${tax.after_tax_real != null ? `<div class="card-sub">Real: $${fmt(tax.after_tax_real)}</div>` : ""}
+      </div>
+      <div class="card ${(sp.purchasing_power_loss ?? 0) > 0 ? 'expense' : 'income'}">
+        <div class="card-label">Purchasing Power Lost</div>
+        <div class="card-value">${sp.purchasing_power_loss != null ? sp.purchasing_power_loss.toFixed(1) + "%" : "N/A"}</div>
+        <div class="card-sub">Since ${cpi.base_year}</div>
+      </div>
+      <div class="card">
+        <div class="card-label">CPI (YoY)</div>
+        <div class="card-value">${cpi.yoy_change != null ? cpi.yoy_change.toFixed(1) + "%" : "N/A"}</div>
+        <div class="card-sub">Index: ${cpi.current_index ?? "N/A"}</div>
+      </div>
+      <div class="card ${(sp.real_savings_rate ?? 0) >= 0 ? 'income' : 'expense'}">
+        <div class="card-label">Real Savings Rate</div>
+        <div class="card-value">${sp.real_savings_rate != null ? sp.real_savings_rate.toFixed(1) + "%" : "N/A"}</div>
+        <div class="card-sub">After tax & expenses</div>
+      </div>
+    </div>
+
+    <!-- Tax breakdown -->
+    <div class="tax-section">
+      <h3>Where Your Tax Dollars Go</h3>
+      <div class="econ-split">
+        <div class="econ-chart-col">
+          <canvas id="chart-tax-breakdown"></canvas>
+        </div>
+        <div class="econ-table-col">
+          <table class="tax-table">
+            <thead><tr><th>Category</th><th>Amount</th><th>%</th></tr></thead>
+            <tbody>
+              <tr><td><strong>PAYG Income Tax</strong></td><td>$${fmt(tax.payg)}</td><td></td></tr>
+              <tr><td><strong>Medicare Levy</strong></td><td>$${fmt(tax.medicare)}</td><td></td></tr>
+              <tr class="tax-total"><td><strong>Total Tax</strong></td><td><strong>$${fmt(tax.total_tax)}</strong></td><td></td></tr>
+              <tr><td colspan="3" style="padding-top:0.5rem;"><em>Your $${fmt(tax.total_tax)} funds:</em></td></tr>
+              ${tax.tax_breakdown.map(b => `
+                <tr>
+                  <td>${escapeHtml(b.category)}</td>
+                  <td>$${fmt(b.amount)}</td>
+                  <td>${b.pct}%</td>
+                </tr>
+              `).join("")}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Income waterfall -->
+    <div class="tax-section">
+      <h3>Income Waterfall</h3>
+      <div class="waterfall">
+        ${renderWaterfall(sp.salary, tax)}
+      </div>
+    </div>
+
+    <!-- Inflation-adjusted spending -->
+    ${data.inflation_adjusted_spending.length > 0 ? `
+    <div class="tax-section">
+      <h3>Inflation-Adjusted Spending</h3>
+      <p class="tax-hint">All "real" values in ${cpi.base_year} dollars</p>
+      <table class="tax-table">
+        <thead>
+          <tr>
+            <th>Category</th>
+            <th>Nominal</th>
+            ${hasCpi ? "<th>Real</th><th>Real YoY</th>" : ""}
+          </tr>
+        </thead>
+        <tbody>
+          ${data.inflation_adjusted_spending.map(s => `
+            <tr>
+              <td>${escapeHtml(s.category)}</td>
+              <td class="negative">$${fmt(s.nominal)}</td>
+              ${hasCpi ? `
+                <td>$${s.real != null ? fmt(s.real) : "N/A"}</td>
+                <td class="${(s.real_change_pct ?? 0) > 0 ? 'negative' : (s.real_change_pct ?? 0) < 0 ? 'positive' : ''}">${s.real_change_pct != null ? (s.real_change_pct > 0 ? "+" : "") + s.real_change_pct.toFixed(1) + "%" : "-"}</td>
+              ` : ""}
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+    </div>` : ""}
+
+    <!-- Net worth -->
+    <div class="tax-section">
+      <h3>Net Worth — Real vs Nominal</h3>
+      <div class="summary-cards" style="margin-bottom: 1rem;">
+        <div class="card">
+          <div class="card-label">Nominal</div>
+          <div class="card-value ${nw.nominal >= 0 ? "positive" : "negative"}">${nw.nominal < 0 ? "-" : ""}$${fmt(nw.nominal)}</div>
+        </div>
+        ${nw.real != null ? `
+        <div class="card">
+          <div class="card-label">Real (${cpi.base_year}$)</div>
+          <div class="card-value ${nw.real >= 0 ? "positive" : "negative"}">${nw.real < 0 ? "-" : ""}$${fmt(nw.real)}</div>
+        </div>
+        <div class="card ${(nw.real_change_pct ?? 0) >= 0 ? 'income' : 'expense'}">
+          <div class="card-label">Real Change YoY</div>
+          <div class="card-value">${nw.real_change_pct != null ? (nw.real_change_pct > 0 ? "+" : "") + nw.real_change_pct.toFixed(1) + "%" : "N/A"}</div>
+        </div>
+        ` : ""}
+      </div>
+    </div>
+
+    <!-- CPI history chart -->
+    ${data.cpi_history.length > 0 ? `
+    <div class="tax-section">
+      <h3>CPI Trend (All Groups, Australia)</h3>
+      <div class="chart-card">
+        <canvas id="chart-cpi-history"></canvas>
+      </div>
+    </div>` : ""}
+  `;
+
+  // Render charts
+  if (tax.tax_breakdown.length > 0) {
+    renderTaxBreakdownChart(
+      document.getElementById("chart-tax-breakdown") as HTMLCanvasElement,
+      tax.tax_breakdown,
+    );
+  }
+  if (data.cpi_history.length > 0) {
+    renderCpiHistoryChart(
+      document.getElementById("chart-cpi-history") as HTMLCanvasElement,
+      data.cpi_history,
+    );
+  }
+}
+
+function renderWaterfall(salary: number, tax: EconomicsSummary["tax_analysis"]): string {
+  if (salary <= 0) return "<p>No salary data for this year.</p>";
+  const steps = [
+    { label: "Gross Salary", value: salary, color: "var(--green)" },
+    { label: "PAYG Tax", value: -tax.payg, color: "var(--red)" },
+    { label: "Medicare", value: -tax.medicare, color: "var(--red)" },
+    { label: "After Tax", value: tax.after_tax, color: "var(--accent)" },
+  ];
+  const maxVal = salary;
+  return steps.map(s => {
+    const width = Math.abs(s.value) / maxVal * 100;
+    return `
+      <div class="waterfall-row">
+        <span class="waterfall-label">${s.label}</span>
+        <div class="waterfall-bar-track">
+          <div class="waterfall-bar" style="width: ${width}%; background: ${s.color};"></div>
+        </div>
+        <span class="waterfall-value ${s.value < 0 ? 'negative' : 'positive'}">${s.value < 0 ? "-" : ""}$${fmt(Math.abs(s.value))}</span>
+      </div>
+    `;
+  }).join("");
+}
+
 // --- Helpers ---
 
 function fmt(val: number): string {
@@ -569,6 +848,9 @@ function renderTransactionTable(transactions: Transaction[]) {
           <input type="text" class="notes-input" data-id="${t.id}"
             value="${escapeHtml(t.notes || "")}" placeholder="Add note..." />
         </td>
+        <td>
+          ${t.amount < 0 ? `<button class="share-btn" data-id="${t.id}" title="Add to shared expenses">Split</button>` : ""}
+        </td>
       </tr>`;
     })
     .join("");
@@ -588,6 +870,20 @@ function renderTransactionTable(transactions: Transaction[]) {
       await api.updateTransaction(id, { notes: input.value });
       input.classList.add("saved");
       setTimeout(() => input.classList.remove("saved"), 1000);
+    });
+  });
+
+  tbody.querySelectorAll<HTMLButtonElement>(".share-btn").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const id = Number(btn.dataset.id);
+      try {
+        await api.addSharedExpense(id);
+        btn.textContent = "Shared";
+        btn.disabled = true;
+        btn.classList.add("saved");
+      } catch {
+        btn.textContent = "Error";
+      }
     });
   });
 }
@@ -656,6 +952,25 @@ document.getElementById("trends-to")?.addEventListener("change", loadTrends);
 document.getElementById("review-year")?.addEventListener("change", loadYearReview);
 document.getElementById("ss-fy")?.addEventListener("change", loadSpreadsheet);
 document.getElementById("tax-fy")?.addEventListener("change", loadTax);
+document.getElementById("shared-hide-settled")?.addEventListener("change", loadSharedExpenses);
+document.getElementById("econ-year")?.addEventListener("change", loadEconomics);
+document.getElementById("econ-sync-cpi")?.addEventListener("click", async () => {
+  const btn = document.getElementById("econ-sync-cpi") as HTMLButtonElement;
+  btn.textContent = "Syncing...";
+  btn.disabled = true;
+  try {
+    const result = await api.syncCpi();
+    btn.textContent = `Synced (${result.rows_synced} rows)`;
+    await loadEconomics();
+  } catch {
+    btn.textContent = "Sync Failed";
+  } finally {
+    setTimeout(() => {
+      btn.textContent = "Sync CPI Data";
+      btn.disabled = false;
+    }, 3000);
+  }
+});
 
 // --- Init ---
 
@@ -665,6 +980,7 @@ async function init() {
   populateFYSelect();
   populateSSFYSelect();
   populateReviewYearSelect();
+  populateEconYearSelect();
   initSpreadsheet();
   await loadDashboard();
 }
@@ -696,6 +1012,19 @@ function populateFYSelect() {
   }
   // Default to most recent complete FY
   sel.value = String(currentFY - 1);
+}
+
+function populateEconYearSelect() {
+  const sel = document.getElementById("econ-year") as HTMLSelectElement | null;
+  if (!sel) return;
+  const currentYear = new Date().getFullYear();
+  for (let y = currentYear; y >= currentYear - 10; y--) {
+    const opt = document.createElement("option");
+    opt.value = String(y);
+    opt.textContent = String(y);
+    sel.appendChild(opt);
+  }
+  sel.value = String(currentYear);
 }
 
 function populateReviewYearSelect() {

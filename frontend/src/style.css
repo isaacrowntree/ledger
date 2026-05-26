@@ -421,9 +421,154 @@ tr:hover { background: var(--surface); }
 
 .ss-full-table td:first-child { white-space: nowrap; }
 
+/* Shared Expenses */
+.share-btn {
+  padding: 0.15rem 0.5rem;
+  font-size: 0.75rem;
+  background: var(--accent);
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.share-btn:disabled { opacity: 0.5; cursor: default; }
+.share-btn.saved { background: var(--green); }
+
+.split-input {
+  width: 3.5rem;
+  padding: 0.15rem 0.25rem;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 0.8rem;
+  text-align: right;
+}
+
+.settled-row { opacity: 0.5; }
+.settled-row:hover { opacity: 0.8; }
+
+.settled-check { cursor: pointer; width: 1rem; height: 1rem; }
+
+.remove-shared-btn {
+  background: none;
+  border: none;
+  color: var(--red);
+  cursor: pointer;
+  font-size: 1.1rem;
+  padding: 0 0.25rem;
+  opacity: 0.5;
+}
+.remove-shared-btn:hover { opacity: 1; }
+
+#shared-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 0.5rem;
+}
+#shared-table th, #shared-table td {
+  padding: 0.4rem 0.6rem;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.85rem;
+}
+#shared-table th {
+  background: var(--surface);
+  color: var(--text-dim);
+  font-weight: 500;
+  position: sticky;
+  top: 0;
+}
+
+/* Economics Tab */
+.econ-cards {
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+}
+
+.card-sub {
+  font-size: 0.7rem;
+  color: var(--text-dim);
+  margin-top: 0.15rem;
+}
+
+.econ-split {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.5rem;
+  align-items: start;
+}
+
+.econ-chart-col {
+  max-width: 400px;
+}
+
+.econ-notice {
+  background: rgba(234, 179, 8, 0.1);
+  border: 1px solid var(--yellow);
+  color: var(--yellow);
+  padding: 0.75rem 1rem;
+  border-radius: 8px;
+  font-size: 0.85rem;
+  margin-bottom: 1rem;
+}
+
+.btn-secondary {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 0.4rem 1rem;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.875rem;
+  transition: all 0.15s;
+}
+.btn-secondary:hover { border-color: var(--accent); color: var(--accent); }
+.btn-secondary:disabled { opacity: 0.5; cursor: default; }
+
+/* Waterfall chart */
+.waterfall {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.waterfall-row {
+  display: grid;
+  grid-template-columns: 120px 1fr 100px;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.waterfall-label {
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  text-align: right;
+}
+
+.waterfall-bar-track {
+  height: 24px;
+  background: var(--bg);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.waterfall-bar {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.4s ease;
+}
+
+.waterfall-value {
+  font-size: 0.85rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
 /* Responsive */
 @media (max-width: 768px) {
   .charts-grid { grid-template-columns: 1fr; }
   .summary-cards { grid-template-columns: 1fr; }
   header { flex-direction: column; align-items: flex-start; gap: 0.5rem; }
+  .econ-split { grid-template-columns: 1fr; }
+  .waterfall-row { grid-template-columns: 80px 1fr 80px; }
 }
