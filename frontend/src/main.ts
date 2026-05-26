@@ -347,7 +347,7 @@ function renderATOReturn(data: ATOReturn) {
         <p class="tax-hint">${escapeHtml(r.address)} | ${r.ownership_pct}% ownership · ${r.floor_area_pct}% floor area · ${r.rental_weeks} weeks rented</p>
         <table class="tax-table">
           <thead><tr>
-            <th>Line item</th><th>Gross</th><th>Apply</th><th>Factor</th><th>Isaac's share</th>
+            <th>Line item</th><th>Gross</th><th>Apply</th><th>Factor</th><th>Your share</th>
           </tr></thead>
           <tbody>
             <tr>
