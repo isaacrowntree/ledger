@@ -944,12 +944,12 @@ def api_ato_return():
         depreciation = 0.0
         for d in r["deductions"]:
             if d["apply"] == ["depreciation"]:
-                depreciation = d["isaac_share"]
+                depreciation = d["taxpayer_share"]
                 continue
             expenses.append({
                 "ato_label": d["ato_label"],
                 "raw": d["gross"],
-                "share": d["isaac_share"],
+                "share": d["taxpayer_share"],
                 "factor": d["factor"],
                 "apply": d["apply"],
                 "n_txns": d["n_txns"],
@@ -961,10 +961,10 @@ def api_ato_return():
             "floor_area_pct": prop.get("floor_area_pct", 100),
             "rental_weeks": prop.get("rental_weeks", {}).get(fy_int, 0),
             "gross_income": r["income"]["gross"],
-            "income_share": r["income"]["isaac_share"],
+            "income_share": r["income"]["taxpayer_share"],
             "expenses": expenses,
             "depreciation": depreciation,
-            "total_expenses": r["total_deductions_isaac"],
+            "total_expenses": r["total_deductions"],
             "net_rent": r["net"],
         })
 
