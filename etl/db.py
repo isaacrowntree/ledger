@@ -137,6 +137,23 @@ CREATE TABLE IF NOT EXISTS tax_overrides (
     notes TEXT,
     UNIQUE(fy, section, label)
 );
+
+CREATE TABLE IF NOT EXISTS shared_expenses (
+    id INTEGER PRIMARY KEY,
+    transaction_id INTEGER NOT NULL UNIQUE REFERENCES transactions(id),
+    split_pct REAL NOT NULL DEFAULT 50.0,
+    is_settled INTEGER NOT NULL DEFAULT 0,
+    settled_date TEXT
+);
+
+CREATE TABLE IF NOT EXISTS cpi_data (
+    id INTEGER PRIMARY KEY,
+    period TEXT NOT NULL,
+    index_value REAL NOT NULL,
+    pct_change_yoy REAL,
+    source TEXT NOT NULL DEFAULT 'abs',
+    UNIQUE(period, source)
+);
 """
 
 
