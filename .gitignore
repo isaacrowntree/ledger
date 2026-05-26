@@ -34,3 +34,15 @@ scripts/post-ingest.sh
 # Scratch files
 hsbc_statements_page.md
 hsbc_verification.png
+
+# Bank-login screenshots / Playwright scratch captures
+*_login*.png
+*_home*.png
+ing_keypad*.png
+ing_period*.png
+ing_statements*.png
+bankwest_txn_view.png
+
+# Astro build outputs
+docs/.astro/
+docs/dist/
