@@ -9,6 +9,7 @@ from etl.cpi import sync_cpi, get_cpi_for_year, get_cpi_history, get_latest_cpi,
 from etl.dedup import find_duplicates, resolve_duplicates
 from etl.tax_calc import calculate_total_tax, get_tax_dollar_breakdown
 from etl.splitter import load_tax_config
+from etl import rental as rental_calc
 
 PROJECT_ROOT = Path(__file__).parent.parent
 FRONTEND_DIST = PROJECT_ROOT / "frontend" / "dist"
@@ -930,64 +931,41 @@ def api_ato_return():
           AND a.account_type NOT IN ('loan')
     """, (fy_start, fy_end)).fetchone()["total"]
 
-    # Item 21: Rental - reuse spreadsheet/rental logic
+    # Item 21: Rental — uses the per-rule apply-mode allocator (etl.rental)
+    # which supports floor_area_pct and time-fraction in addition to ownership_pct.
+    rental_results = rental_calc.compute_rental_deductions(conn, tax_config, fy_int)
     rental_data = []
     for prop in tax_config.get("rental_properties", []):
-        rental_weeks = prop.get("rental_weeks", {}).get(fy_int, 0)
-        ownership_pct = prop.get("ownership_pct", 100)
-        income_cat = prop.get("income_category", "Airbnb Income")
-
-        income_row = conn.execute("""
-            SELECT COALESCE(SUM(t.amount), 0) as total
-            FROM transactions t LEFT JOIN categories c ON t.category_id = c.id
-            WHERE t.date >= ? AND t.date <= ? AND c.name = ? AND t.is_transfer = 0
-        """, (fy_start, fy_end, income_cat)).fetchone()
-        gross_income = income_row["total"]
-        income_share = round(gross_income * ownership_pct / 100, 2)
-
+        name = prop["name"]
+        r = rental_results.get(name)
+        if not r:
+            continue
         expenses = []
-        for mapping in prop.get("expense_mapping", []):
-            if "category" in mapping:
-                row = conn.execute("""
-                    SELECT COALESCE(SUM(t.amount), 0) as total
-                    FROM transactions t LEFT JOIN categories c ON t.category_id = c.id
-                    WHERE t.date >= ? AND t.date <= ? AND c.name = ? AND t.is_transfer = 0
-                """, (fy_start, fy_end, mapping["category"])).fetchone()
-                raw = abs(row["total"])
-            elif "tag" in mapping:
-                row = conn.execute("""
-                    SELECT COALESCE(SUM(t.amount), 0) as total
-                    FROM transactions t JOIN transaction_tags tt ON tt.transaction_id = t.id
-                    WHERE t.date >= ? AND t.date <= ? AND tt.tag = ? AND t.is_transfer = 0
-                """, (fy_start, fy_end, mapping["tag"])).fetchone()
-                raw = abs(row["total"])
-            else:
-                raw = 0
-            share = round(raw * ownership_pct / 100, 2)
-            expenses.append({"ato_label": mapping["ato_label"], "raw": raw, "share": share})
-
-        # Depreciation
-        dep_total = 0
-        for sched in tax_config.get("depreciation_schedules", []):
-            if sched.get("property") == prop["name"] and sched.get("type") == "rental":
-                for item in sched.get("items", []):
-                    if item.get("fy") == fy_int:
-                        dep_total += item["amount"]
-
-        total_exp = sum(e["share"] for e in expenses) + dep_total
-        net = income_share - total_exp
-
+        depreciation = 0.0
+        for d in r["deductions"]:
+            if d["apply"] == ["depreciation"]:
+                depreciation = d["isaac_share"]
+                continue
+            expenses.append({
+                "ato_label": d["ato_label"],
+                "raw": d["gross"],
+                "share": d["isaac_share"],
+                "factor": d["factor"],
+                "apply": d["apply"],
+                "n_txns": d["n_txns"],
+            })
         rental_data.append({
-            "property": prop["name"],
+            "property": name,
             "address": prop.get("address", ""),
-            "ownership_pct": ownership_pct,
-            "rental_weeks": rental_weeks,
-            "gross_income": gross_income,
-            "income_share": income_share,
+            "ownership_pct": prop.get("ownership_pct", 100),
+            "floor_area_pct": prop.get("floor_area_pct", 100),
+            "rental_weeks": prop.get("rental_weeks", {}).get(fy_int, 0),
+            "gross_income": r["income"]["gross"],
+            "income_share": r["income"]["isaac_share"],
             "expenses": expenses,
-            "depreciation": dep_total,
-            "total_expenses": total_exp,
-            "net_rent": net,
+            "depreciation": depreciation,
+            "total_expenses": r["total_deductions_isaac"],
+            "net_rent": r["net"],
         })
 
     # Business schedule
@@ -1070,6 +1048,42 @@ def api_ato_return():
     # Spouse info
     spouse = tax_config.get("taxpayer", {}).get("spouse", {})
 
+    # --- Final tax summary ----------------------------------------------
+    # Build the assessable income / total deductions / taxable income / payable view
+    rental_net_total = sum(r["net_rent"] for r in rental_data)
+    business_net_total = sum(b["net"] for b in business_data)
+    trips_total = sum(t["total"] for t in trip_deductions)
+
+    assessable = (
+        salary
+        + interest
+        + max(rental_net_total, 0)        # positive net rent adds to income
+        + max(business_net_total, 0)      # positive business profit adds to income
+    )
+    deductions_total = (
+        abs(min(rental_net_total, 0))     # negative net rent (loss) is a deduction
+        + abs(min(business_net_total, 0))
+        + wfh_amount
+        + trips_total
+    )
+    taxable_income = round(max(assessable - deductions_total, 0), 2)
+
+    tax_bd = calculate_total_tax(taxable_income, fy_int)
+    refund_or_payable = round(tax_withheld - tax_bd["total_tax"], 2)
+
+    summary = {
+        "assessable_income": round(assessable, 2),
+        "total_deductions": round(deductions_total, 2),
+        "taxable_income": taxable_income,
+        "payg": tax_bd["payg"],
+        "medicare": tax_bd["medicare"],
+        "total_tax": tax_bd["total_tax"],
+        "effective_rate": tax_bd["effective_rate"],
+        "tax_withheld": tax_withheld,
+        # positive = refund, negative = bill
+        "refund_or_payable": refund_or_payable,
+    }
+
     conn.close()
 
     return jsonify({
@@ -1093,6 +1107,7 @@ def api_ato_return():
         "manual_entries": manual,
         "overrides": [dict(o) for o in overrides],
         "spouse": spouse,
+        "summary": summary,
     })
 
 

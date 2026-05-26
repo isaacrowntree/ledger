@@ -246,10 +246,58 @@ function renderATOReturn(data: ATOReturn) {
   const tripTotal = data.deductions.work_trips.reduce((s, t) => s + t.total, 0);
   const wfhAmount = data.deductions.wfh.amount;
 
+  const s = data.summary;
+  const refundClass = s.refund_or_payable >= 0 ? "income" : "expense";
+  const refundLabel = s.refund_or_payable >= 0 ? "Estimated Refund" : "Estimated Bill";
+
   el.innerHTML = `
     <div class="tax-header">
       <h2>${escapeHtml(data.fy_label)}</h2>
       <span class="tax-dates">Australian Individual Tax Return</span>
+    </div>
+
+    <!-- BOTTOM-LINE SUMMARY -->
+    <div class="tax-cards">
+      <div class="card ${refundClass}" style="grid-column: span 2;">
+        <div class="card-label">${refundLabel}</div>
+        <div class="card-value" style="font-size: 1.6rem;">
+          ${s.refund_or_payable < 0 ? "-" : ""}$${fmt(Math.abs(s.refund_or_payable))}
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-label">Taxable income</div>
+        <div class="card-value">$${fmt(s.taxable_income)}</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Effective rate</div>
+        <div class="card-value">${s.effective_rate.toFixed(1)}%</div>
+      </div>
+    </div>
+
+    <!-- Reconciliation table -->
+    <div class="tax-section">
+      <h3>Tax Calculation Summary</h3>
+      <table class="tax-table">
+        <tbody>
+          <tr><td>Assessable income (salary + interest + net rent/biz if profit)</td>
+              <td class="positive">$${fmt(s.assessable_income)}</td></tr>
+          <tr><td>Less: total deductions (rental loss + business loss + WFH + work trips)</td>
+              <td class="negative">-$${fmt(s.total_deductions)}</td></tr>
+          <tr class="tax-total"><td>Taxable income</td>
+              <td>$${fmt(s.taxable_income)}</td></tr>
+          <tr><td>PAYG tax</td><td>$${fmt(s.payg)}</td></tr>
+          <tr><td>Medicare levy (2%)</td><td>$${fmt(s.medicare)}</td></tr>
+          <tr class="tax-total"><td>Total tax payable</td><td>$${fmt(s.total_tax)}</td></tr>
+          <tr><td>Less: tax already withheld (PAYG summary)</td>
+              <td class="negative">-$${fmt(s.tax_withheld)}</td></tr>
+          <tr class="tax-total">
+            <td>${s.refund_or_payable >= 0 ? "Refund" : "Amount owing"}</td>
+            <td class="${refundClass === 'income' ? 'positive' : 'negative'}">
+              ${s.refund_or_payable < 0 ? "-" : ""}$${fmt(Math.abs(s.refund_or_payable))}
+            </td>
+          </tr>
+        </tbody>
+      </table>
     </div>
 
     <div class="tax-cards">
@@ -296,18 +344,39 @@ function renderATOReturn(data: ATOReturn) {
     ${data.rental.map((r) => `
       <div class="tax-section">
         <h3>Item 21: Rent - ${escapeHtml(r.property)}</h3>
-        <p class="tax-hint">${escapeHtml(r.address)} | ${r.ownership_pct}% ownership | ${r.rental_weeks} weeks rented</p>
+        <p class="tax-hint">${escapeHtml(r.address)} | ${r.ownership_pct}% ownership · ${r.floor_area_pct}% floor area · ${r.rental_weeks} weeks rented</p>
         <table class="tax-table">
-          <thead><tr><th>Line Item</th><th>Amount</th></tr></thead>
+          <thead><tr>
+            <th>Line item</th><th>Gross</th><th>Apply</th><th>Factor</th><th>Isaac's share</th>
+          </tr></thead>
           <tbody>
-            <tr><td>Gross rental income</td><td class="positive">$${fmt(r.gross_income)}</td></tr>
-            <tr><td>Your share (${r.ownership_pct}%)</td><td class="positive">$${fmt(r.income_share)}</td></tr>
+            <tr>
+              <td>Gross rental income</td>
+              <td class="positive">$${fmt(r.gross_income)}</td>
+              <td>ownership</td>
+              <td>${(r.ownership_pct/100).toFixed(2)}</td>
+              <td class="positive">$${fmt(r.income_share)}</td>
+            </tr>
             ${r.expenses.map((e) => `
-              <tr><td>${escapeHtml(e.ato_label)}</td><td class="negative">-$${fmt(e.share)}</td></tr>
+              <tr>
+                <td>${escapeHtml(e.ato_label)}</td>
+                <td>$${fmt(e.raw)}</td>
+                <td class="tax-hint">${e.apply.length ? e.apply.join("+") : "100%"}</td>
+                <td>${e.factor.toFixed(4)}</td>
+                <td class="negative">-$${fmt(e.share)}</td>
+              </tr>
             `).join("")}
-            ${r.depreciation > 0 ? `<tr><td>Capital allowances</td><td class="negative">-$${fmt(r.depreciation)}</td></tr>` : ""}
+            ${r.depreciation > 0 ? `
+              <tr>
+                <td>Capital allowances (QS depreciation)</td>
+                <td>$${fmt(r.depreciation)}</td>
+                <td class="tax-hint">depreciation</td>
+                <td>1.0000</td>
+                <td class="negative">-$${fmt(r.depreciation)}</td>
+              </tr>
+            ` : ""}
             <tr class="tax-total">
-              <td>Net rent</td>
+              <td colspan="4">Net rent</td>
               <td class="${r.net_rent >= 0 ? "positive" : "negative"}">${r.net_rent < 0 ? "-" : ""}$${fmt(r.net_rent)}</td>
             </tr>
           </tbody>

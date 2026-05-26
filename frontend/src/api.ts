@@ -211,10 +211,18 @@ export interface ATOReturn {
     property: string;
     address: string;
     ownership_pct: number;
+    floor_area_pct: number;
     rental_weeks: number;
     gross_income: number;
     income_share: number;
-    expenses: { ato_label: string; raw: number; share: number }[];
+    expenses: {
+      ato_label: string;
+      raw: number;
+      share: number;
+      factor: number;
+      apply: string[];
+      n_txns: number;
+    }[];
     depreciation: number;
     total_expenses: number;
     net_rent: number;
@@ -239,6 +247,17 @@ export interface ATOReturn {
   };
   manual_entries: { label: string; amount: number; section: string; notes: string }[];
   spouse: { name: string; taxable_income: number };
+  summary: {
+    assessable_income: number;
+    total_deductions: number;
+    taxable_income: number;
+    payg: number;
+    medicare: number;
+    total_tax: number;
+    effective_rate: number;
+    tax_withheld: number;
+    refund_or_payable: number;  // positive = refund, negative = bill
+  };
 }
 
 async function post<T>(path: string, body: Record<string, unknown>): Promise<T> {
