@@ -32,6 +32,10 @@ class BankwestCSVParser(BaseParser):
         if not description:
             return None
 
+        # Skip pending charges — they often re-post with different details/amounts
+        if description.startswith("AUTHORISATION ONLY"):
+            return None
+
         debit = self._parse_amount(row.get("Debit", ""))
         credit = self._parse_amount(row.get("Credit", ""))
 

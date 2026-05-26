@@ -48,7 +48,10 @@ class INGPDFParser(BaseParser):
 
     def parse(self, file_path: Path) -> list[RawTransaction]:
         text = self._extract_text(file_path)
-        raw_entries = self._parse_entries(text)
+        if self._is_interim(text):
+            raw_entries = self._parse_interim_entries(text)
+        else:
+            raw_entries = self._parse_entries(text)
         transactions = []
 
         for entry in raw_entries:
@@ -57,6 +60,83 @@ class INGPDFParser(BaseParser):
                 transactions.append(txn)
 
         return transactions
+
+    def _is_interim(self, text: str) -> bool:
+        return "Interim statement" in text and "Deposit($)" in text
+
+    def _parse_interim_entries(self, text: str) -> list[dict]:
+        # Interim statements use: "DD Mon YYYY  Description  [-]$amount  [-]$balance"
+        # Sign on the amount column tells direction (negative = withdrawal).
+        txn_re = re.compile(
+            r"^(\d{2}\s+[A-Za-z]{3}\s+\d{4})\s+(.+?)\s+(-?\$[\d,]+\.\d{2})\s+(-?\$[\d,]+\.\d{2})$"
+        )
+        entries: list[dict] = []
+        current: dict | None = None
+        in_transactions = False
+
+        for raw in text.split("\n"):
+            line = raw.strip()
+            if not line:
+                continue
+            if line.startswith("Date Description"):
+                in_transactions = True
+                continue
+            if not in_transactions:
+                continue
+            if line.startswith("Brought Forward") or line.startswith("Closing Balance"):
+                continue
+            if line.startswith("Interim statements may") or line.startswith("transactions carefully") \
+               or line.startswith("us a secure message") or line.startswith("ING is a business name") \
+               or line.startswith("ABN ") or line.startswith("GPO Box") or line.startswith("www.ing.com.au"):
+                if current:
+                    entries.append(current)
+                    current = None
+                continue
+
+            m = txn_re.match(line)
+            if m:
+                if current:
+                    entries.append(current)
+                date_str, desc, amount_str, balance_str = m.groups()
+                amount = self._parse_signed_dollar(amount_str)
+                current = {
+                    "date": self._parse_interim_date(date_str),
+                    "description": desc.strip(),
+                    "money_out": amount_str if amount and amount < 0 else "",
+                    "money_in": amount_str if amount and amount > 0 else "",
+                    "amount": amount,
+                    "balance": balance_str,
+                }
+            elif current is not None:
+                current["description"] += " " + line
+
+        if current:
+            entries.append(current)
+        return entries
+
+    def _parse_signed_dollar(self, s: str) -> float | None:
+        if not s:
+            return None
+        cleaned = s.replace("$", "").replace(",", "").strip()
+        try:
+            return float(cleaned)
+        except ValueError:
+            return None
+
+    _MONTHS = {"Jan": "01", "Feb": "02", "Mar": "03", "Apr": "04", "May": "05",
+               "Jun": "06", "Jul": "07", "Aug": "08", "Sep": "09", "Oct": "10",
+               "Nov": "11", "Dec": "12"}
+
+    def _parse_interim_date(self, s: str) -> str:
+        # "01 Apr 2026" → "01/04/2026" (kept in DD/MM/YYYY for _build_transaction)
+        parts = s.split()
+        if len(parts) != 3:
+            return ""
+        day, mon, year = parts
+        mm = self._MONTHS.get(mon)
+        if not mm:
+            return ""
+        return f"{day}/{mm}/{year}"
 
     def _extract_text(self, file_path: Path) -> str:
         pages = []

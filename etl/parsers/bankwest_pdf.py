@@ -47,6 +47,17 @@ SKIP_PATTERNS = [
     re.compile(r"^\d+ of \d+$"),
 ]
 
+# Lines that signal the disclaimer/footer — exit transactions mode when seen,
+# otherwise their text gets appended onto the last transaction's description.
+STOP_PATTERNS = [
+    re.compile(r"^Ways to pay"),
+    re.compile(r"^Important information about your"),
+    re.compile(r"^Other information"),
+    re.compile(r"^Unauthorised or unknown transactions"),
+    re.compile(r"^Misused, lost or stolen"),
+    re.compile(r"® Registered to BPAY"),
+]
+
 
 class BankwestPDFParser(BaseParser):
     """Parse Bankwest Australia credit card PDF eStatements."""
@@ -98,6 +109,14 @@ class BankwestPDFParser(BaseParser):
                 continue
 
             if not in_transactions:
+                continue
+
+            # Exit transactions mode at footer/disclaimer
+            if any(p.match(line) for p in STOP_PATTERNS):
+                if current and current.get("amount") is not None:
+                    entries.append(current)
+                current = None
+                in_transactions = False
                 continue
 
             # Skip known non-transaction lines
