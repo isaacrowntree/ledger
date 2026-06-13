@@ -30,6 +30,8 @@ frontend/dist/
 
 # Personal scripts
 scripts/post-ingest.sh
+# One-off manual imports embed real transaction data / account names (PII)
+scripts/import_manual_*.py
 
 # Scratch files
 hsbc_statements_page.md

@@ -1495,7 +1495,9 @@ def api_shared_expenses():
     rows = conn.execute("""
         SELECT se.id, se.transaction_id, se.split_pct, se.is_settled, se.settled_date,
                t.date, t.description, t.amount, t.notes,
-               c.name as category_name, a.name as account_name
+               c.name as category_name, a.name as account_name,
+               (SELECT group_concat(tt.tag, ',') FROM transaction_tags tt
+                WHERE tt.transaction_id = t.id) as tags
         FROM shared_expenses se
         JOIN transactions t ON se.transaction_id = t.id
         LEFT JOIN categories c ON t.category_id = c.id
@@ -1506,14 +1508,37 @@ def api_shared_expenses():
     items = []
     total_shared = 0.0
     total_settled = 0.0
+    by_category: dict[str, dict] = {}
+    by_tag: dict[str, dict] = {}
+
+    def add_group(bucket: dict, key: str, share: float, settled: bool):
+        g = bucket.setdefault(key, {"total_shared": 0.0, "total_settled": 0.0})
+        g["total_shared"] += share
+        if settled:
+            g["total_settled"] += share
+
     for r in rows:
         d = dict(r)
         share_amount = abs(d["amount"]) * (d["split_pct"] / 100.0)
         d["share_amount"] = round(share_amount, 2)
+        d["tags"] = d["tags"].split(",") if d["tags"] else []
         total_shared += share_amount
         if d["is_settled"]:
             total_settled += share_amount
+        add_group(by_category, d["category_name"] or "Uncategorized", share_amount, bool(d["is_settled"]))
+        for tag in (d["tags"] or ["(untagged)"]):
+            add_group(by_tag, tag, share_amount, bool(d["is_settled"]))
         items.append(d)
+
+    def finalize(bucket: dict) -> list:
+        out = [{
+            "key": key,
+            "total_shared": round(g["total_shared"], 2),
+            "total_settled": round(g["total_settled"], 2),
+            "balance_owing": round(g["total_shared"] - g["total_settled"], 2),
+        } for key, g in bucket.items()]
+        out.sort(key=lambda x: x["balance_owing"], reverse=True)
+        return out
 
     conn.close()
     return jsonify({
@@ -1521,6 +1546,8 @@ def api_shared_expenses():
         "total_shared": round(total_shared, 2),
         "total_settled": round(total_settled, 2),
         "balance_owing": round(total_shared - total_settled, 2),
+        "by_category": finalize(by_category),
+        "by_tag": finalize(by_tag),
     })
 
 

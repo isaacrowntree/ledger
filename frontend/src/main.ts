@@ -8,16 +8,32 @@ let allCategories: Category[] = [];
 
 // --- Tab navigation ---
 
+const VALID_VIEWS = new Set([
+  "dashboard", "transactions", "budget", "trends", "year-review",
+  "financial-year", "shared-expenses", "tax", "economics",
+]);
+
+function activateTab(viewId: string) {
+  if (!VALID_VIEWS.has(viewId)) viewId = "dashboard";
+  document.querySelectorAll(".tab").forEach((b) => b.classList.remove("active"));
+  document.querySelectorAll(".view").forEach((v) => v.classList.remove("active"));
+  document.querySelector(`.tab[data-tab="${viewId}"]`)?.classList.add("active");
+  document.getElementById(viewId)?.classList.add("active");
+  loadView(viewId);
+}
+
 document.querySelectorAll<HTMLButtonElement>(".tab").forEach((btn) => {
   btn.addEventListener("click", () => {
-    document.querySelectorAll(".tab").forEach((b) => b.classList.remove("active"));
-    document.querySelectorAll(".view").forEach((v) => v.classList.remove("active"));
-    btn.classList.add("active");
     const viewId = btn.dataset.tab!;
-    document.getElementById(viewId)!.classList.add("active");
-    loadView(viewId);
+    // Setting the hash drives activation via the hashchange listener so the URL
+    // stays in sync and a refresh reopens the same tab. Re-activate directly if
+    // the hash is already this tab (no hashchange event would fire).
+    if (location.hash.slice(1) === viewId) activateTab(viewId);
+    else location.hash = viewId;
   });
 });
+
+window.addEventListener("hashchange", () => activateTab(location.hash.slice(1)));
 
 // --- View loaders ---
 
@@ -601,59 +617,190 @@ function renderYearReview(data: import("./api").YearReview) {
 
 // --- Shared Expenses Tab ---
 
+type SharedDim = "none" | "category" | "tag";
+
+let lastSharedData: SharedExpensesResponse | null = null;
+
 async function loadSharedExpenses() {
   const data = await api.sharedExpenses();
-  renderSharedSummary(data);
-  renderSharedTable(data.items);
+  lastSharedData = data;
+  populateSharedFilter(data);
+  rerenderShared();
 }
 
-function renderSharedSummary(data: SharedExpensesResponse) {
+// Re-render derived views from cached data + current controls (no refetch).
+// Filter (category/tag) scopes everything; Hide settled only declutters the table.
+function rerenderShared() {
+  if (!lastSharedData) return;
+  const scoped = sharedFilteredItems();
+  renderSharedSummary(scoped);
+  renderSharedBreakdown(scoped);
+  const hideSettled = (document.getElementById("shared-hide-settled") as HTMLInputElement)?.checked;
+  renderSharedTable(hideSettled ? scoped.filter((i) => !i.is_settled) : scoped);
+}
+
+function sharedGroupBy(): SharedDim {
+  return ((document.getElementById("shared-group-by") as HTMLSelectElement)?.value || "none") as SharedDim;
+}
+
+function sharedKeys(item: SharedExpenseItem, dim: SharedDim): string[] {
+  if (dim === "category") return [item.category_name || "Uncategorized"];
+  if (dim === "tag") return item.tags.length ? item.tags : ["(untagged)"];
+  return [];
+}
+
+// Items after the active Category/Tag filter (independent of grouping).
+function sharedFilteredItems(): SharedExpenseItem[] {
+  const data = lastSharedData!;
+  const filterVal = (document.getElementById("shared-filter") as HTMLSelectElement)?.value || "";
+  if (!filterVal) return data.items;
+  const sep = filterVal.indexOf(":");
+  const dim = filterVal.slice(0, sep) as SharedDim;
+  const val = filterVal.slice(sep + 1);
+  return data.items.filter((i) => sharedKeys(i, dim).includes(val));
+}
+
+// One Filter dropdown spanning both dimensions, grouped with <optgroup>.
+function populateSharedFilter(data: SharedExpensesResponse) {
+  const sel = document.getElementById("shared-filter") as HTMLSelectElement | null;
+  if (!sel) return;
+  const prev = sel.value;
+  const opt = (dim: string, g: { key: string }) =>
+    `<option value="${escapeHtml(dim + ":" + g.key)}">${escapeHtml(g.key)}</option>`;
+  sel.innerHTML =
+    `<option value="">All</option>` +
+    `<optgroup label="Category">${data.by_category.map((g) => opt("category", g)).join("")}</optgroup>` +
+    `<optgroup label="Tag">${data.by_tag.map((g) => opt("tag", g)).join("")}</optgroup>`;
+  sel.value = prev;
+  if (sel.value !== prev) sel.value = "";
+}
+
+function computeSharedBreakdown(items: SharedExpenseItem[], dim: SharedDim) {
+  const m = new Map<string, { shared: number; settled: number }>();
+  for (const it of items) {
+    for (const k of sharedKeys(it, dim)) {
+      const g = m.get(k) || { shared: 0, settled: 0 };
+      g.shared += it.share_amount;
+      if (it.is_settled) g.settled += it.share_amount;
+      m.set(k, g);
+    }
+  }
+  return [...m.entries()]
+    .map(([key, g]) => ({ key, shared: g.shared, settled: g.settled, owing: g.shared - g.settled }))
+    .sort((a, b) => b.owing - a.owing);
+}
+
+// Pivot of balance owing by the grouped dimension; recomputes from filtered items.
+function renderSharedBreakdown(items: SharedExpenseItem[]) {
+  const el = document.getElementById("shared-breakdown")!;
+  const dim = sharedGroupBy();
+  if (dim === "none") { el.innerHTML = ""; return; }
+  const rows = computeSharedBreakdown(items, dim);
+  // Total is over unique items, not a sum of rows — a tag pivot would otherwise
+  // double-count any item carrying more than one tag.
+  const totShared = items.reduce((s, i) => s + i.share_amount, 0);
+  const totSettled = items.reduce((s, i) => s + (i.is_settled ? i.share_amount : 0), 0);
+  const tot = { shared: totShared, settled: totSettled, owing: totShared - totSettled };
+  el.innerHTML = `
+    <div class="pivot-card">
+      <div class="pivot-title">Balance owing by ${dim}</div>
+      <table class="breakdown-table">
+        <thead><tr>
+          <th>${dim === "category" ? "Category" : "Tag"}</th>
+          <th class="num">Owed</th><th class="num">Settled</th><th class="num">Balance owing</th>
+        </tr></thead>
+        <tbody>
+          ${rows.map((r) => `<tr>
+            <td>${escapeHtml(r.key)}</td>
+            <td class="num">$${fmt(r.shared)}</td>
+            <td class="num muted">$${fmt(r.settled)}</td>
+            <td class="num ${r.owing > 0 ? "negative" : "muted"}">$${fmt(r.owing)}</td>
+          </tr>`).join("")}
+        </tbody>
+        <tfoot><tr class="pivot-total">
+          <td>Total</td>
+          <td class="num">$${fmt(tot.shared)}</td>
+          <td class="num muted">$${fmt(tot.settled)}</td>
+          <td class="num ${tot.owing > 0 ? "negative" : ""}">$${fmt(tot.owing)}</td>
+        </tr></tfoot>
+      </table>
+    </div>`;
+}
+
+function renderSharedSummary(items: SharedExpenseItem[]) {
   const el = document.getElementById("shared-summary")!;
+  const totalShared = items.reduce((s, i) => s + i.share_amount, 0);
+  const totalSettled = items.reduce((s, i) => s + (i.is_settled ? i.share_amount : 0), 0);
+  const balance = totalShared - totalSettled;
   el.innerHTML = `
     <div class="summary-cards">
       <div class="card expense">
         <div class="card-label">Total Owed</div>
-        <div class="card-value">$${fmt(data.total_shared)}</div>
+        <div class="card-value">$${fmt(totalShared)}</div>
       </div>
       <div class="card income">
         <div class="card-label">Total Settled</div>
-        <div class="card-value">$${fmt(data.total_settled)}</div>
+        <div class="card-value">$${fmt(totalSettled)}</div>
       </div>
-      <div class="card ${data.balance_owing > 0 ? "expense" : "income"}">
+      <div class="card ${balance > 0 ? "expense" : "income"}">
         <div class="card-label">Balance Owing</div>
-        <div class="card-value">$${fmt(data.balance_owing)}</div>
+        <div class="card-value">$${fmt(balance)}</div>
       </div>
     </div>
   `;
 }
 
+function sharedRowHtml(item: SharedExpenseItem): string {
+  return `
+    <tr class="${item.is_settled ? "settled-row" : ""}">
+      <td>${item.date}</td>
+      <td>${escapeHtml(item.description)}</td>
+      <td class="negative">$${fmt(Math.abs(item.amount))}</td>
+      <td>
+        <input type="number" class="split-input" data-id="${item.id}"
+          value="${item.split_pct}" min="0" max="100" step="5" />%
+      </td>
+      <td class="negative">$${fmt(item.share_amount)}</td>
+      <td>${escapeHtml(item.category_name || "")}</td>
+      <td>${item.tags.map((t) => `<span class="tag-chip">${escapeHtml(t)}</span>`).join(" ")}</td>
+      <td>
+        <input type="checkbox" class="settled-check" data-id="${item.id}"
+          ${item.is_settled ? "checked" : ""} />
+      </td>
+      <td>
+        <button class="remove-shared-btn" data-id="${item.id}" title="Remove from shared">&times;</button>
+      </td>
+    </tr>`;
+}
+
 function renderSharedTable(items: SharedExpenseItem[]) {
-  const hideSettled = (document.getElementById("shared-hide-settled") as HTMLInputElement)?.checked;
-  const filtered = hideSettled ? items.filter((i) => !i.is_settled) : items;
+  const groupBy = sharedGroupBy();
   const tbody = document.getElementById("shared-body")!;
 
-  tbody.innerHTML = filtered
-    .map((item) => `
-      <tr class="${item.is_settled ? "settled-row" : ""}">
-        <td>${item.date}</td>
-        <td>${escapeHtml(item.description)}</td>
-        <td class="negative">$${fmt(Math.abs(item.amount))}</td>
-        <td>
-          <input type="number" class="split-input" data-id="${item.id}"
-            value="${item.split_pct}" min="0" max="100" step="5" />%
-        </td>
-        <td class="negative">$${fmt(item.share_amount)}</td>
-        <td>${escapeHtml(item.category_name || "")}</td>
-        <td>
-          <input type="checkbox" class="settled-check" data-id="${item.id}"
-            ${item.is_settled ? "checked" : ""} />
-        </td>
-        <td>
-          <button class="remove-shared-btn" data-id="${item.id}" title="Remove from shared">&times;</button>
-        </td>
-      </tr>
-    `)
-    .join("");
+  const owingOf = (rows: SharedExpenseItem[]) =>
+    rows.reduce((s, i) => s + (i.is_settled ? 0 : i.share_amount), 0);
+
+  if (items.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="9" class="empty-row">No shared expenses match the current filter.</td></tr>`;
+  } else if (groupBy === "none") {
+    tbody.innerHTML = items.map(sharedRowHtml).join("");
+  } else {
+    const groups = new Map<string, SharedExpenseItem[]>();
+    for (const item of items) {
+      for (const k of sharedKeys(item, groupBy)) {
+        if (!groups.has(k)) groups.set(k, []);
+        groups.get(k)!.push(item);
+      }
+    }
+    const order = [...groups.keys()].sort((a, b) => owingOf(groups.get(b)!) - owingOf(groups.get(a)!));
+    tbody.innerHTML = order.map((k) => {
+      const rows = groups.get(k)!;
+      const full = rows.reduce((s, i) => s + i.share_amount, 0);
+      return `<tr class="group-header"><td colspan="9">${escapeHtml(k)} <span class="muted">— balance owing</span> ` +
+        `$${fmt(owingOf(rows))} <span class="muted">of $${fmt(full)}</span></td></tr>` +
+        rows.map(sharedRowHtml).join("");
+    }).join("");
+  }
 
   tbody.querySelectorAll<HTMLInputElement>(".settled-check").forEach((cb) => {
     cb.addEventListener("change", async () => {
@@ -1021,7 +1168,9 @@ document.getElementById("trends-to")?.addEventListener("change", loadTrends);
 document.getElementById("review-year")?.addEventListener("change", loadYearReview);
 document.getElementById("ss-fy")?.addEventListener("change", loadSpreadsheet);
 document.getElementById("tax-fy")?.addEventListener("change", loadTax);
-document.getElementById("shared-hide-settled")?.addEventListener("change", loadSharedExpenses);
+document.getElementById("shared-hide-settled")?.addEventListener("change", rerenderShared);
+document.getElementById("shared-group-by")?.addEventListener("change", rerenderShared);
+document.getElementById("shared-filter")?.addEventListener("change", rerenderShared);
 document.getElementById("econ-year")?.addEventListener("change", loadEconomics);
 document.getElementById("econ-sync-cpi")?.addEventListener("click", async () => {
   const btn = document.getElementById("econ-sync-cpi") as HTMLButtonElement;
@@ -1051,7 +1200,8 @@ async function init() {
   populateReviewYearSelect();
   populateEconYearSelect();
   initSpreadsheet();
-  await loadDashboard();
+  // Open the tab named in the URL hash (so a refresh stays put); default dashboard.
+  activateTab(location.hash.slice(1) || "dashboard");
 }
 
 function populateSSFYSelect() {

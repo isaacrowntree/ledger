@@ -56,10 +56,10 @@ class HSBCPDFParser(BaseParser):
 
     def parse(self, file_path: Path) -> list[RawTransaction]:
         text = self._extract_text(file_path)
-        statement_year = self._detect_year(text)
+        statement_year, statement_end_month = self._detect_year_and_end_month(text)
         has_balance_col = self._detect_balance_column(text)
         closing_balance = self._extract_closing_balance(text)
-        entries = self._parse_entries(text, statement_year, has_balance_col)
+        entries = self._parse_entries(text, statement_year, has_balance_col, statement_end_month)
 
         transactions = []
         for entry in entries:
@@ -77,17 +77,22 @@ class HSBCPDFParser(BaseParser):
                     pages.append(text)
         return "\n".join(pages)
 
-    def _detect_year(self, text: str) -> str:
-        """Try to find the statement year from header text like 'Statement Period: 01 Jan 2025 to 31 Jan 2025'."""
-        m = re.search(r"(\d{1,2}\s+\w{3}\s+(\d{4}))\s+to\s+\d{1,2}\s+\w{3}\s+\d{4}", text)
+    def _detect_year_and_end_month(self, text: str) -> tuple[str, int | None]:
+        """Find the statement period END year and month, e.g. 'Statement Period: 15 Dec 2024 to 14 Jan 2025'.
+
+        Anchoring on the period end (not start) plus the end month lets
+        _normalize_date handle Dec-Jan statements: a December transaction on a
+        statement ending in January belongs to the previous year.
+        """
+        m = re.search(r"\d{1,2}\s+\w{3}\s+\d{4}\s+to\s+\d{1,2}\s+(\w{3})\s+(\d{4})", text)
         if m:
-            return m.group(2)
+            return m.group(2), int(MONTH_MAP.get(m.group(1), 0)) or None
         # Fallback: find any 4-digit year near top of document
         for line in text.split("\n")[:30]:
             ym = re.search(r"\b(20\d{2})\b", line)
             if ym:
-                return ym.group(1)
-        return "2025"
+                return ym.group(1), None
+        return "2025", None
 
     def _detect_balance_column(self, text: str) -> bool:
         """Check if this looks like a 3-column layout (debit/credit/balance)."""
@@ -101,7 +106,7 @@ class HSBCPDFParser(BaseParser):
             return float(m.group(1).replace(",", ""))
         return None
 
-    def _parse_entries(self, text: str, year: str, has_balance_col: bool) -> list[dict]:
+    def _parse_entries(self, text: str, year: str, has_balance_col: bool, end_month: int | None = None) -> list[dict]:
         lines = text.split("\n")
         entries = []
         current = None
@@ -129,7 +134,7 @@ class HSBCPDFParser(BaseParser):
 
                 amount, balance, desc = self._extract_amounts(rest, has_balance_col)
                 current = {
-                    "date": self._normalize_date(date_str, year),
+                    "date": self._normalize_date(date_str, year, end_month),
                     "description": desc,
                     "amount": amount,
                     "balance": balance,
@@ -233,7 +238,14 @@ class HSBCPDFParser(BaseParser):
             },
         )
 
-    def _normalize_date(self, date_str: str, default_year: str) -> str:
+    def _normalize_date(self, date_str: str, default_year: str, end_month: int | None = None) -> str:
+        def infer_year(month: str) -> str:
+            # Year-rollover: on a statement ending in e.g. January, a December
+            # transaction belongs to the previous year.
+            if end_month and int(month) > end_month:
+                return str(int(default_year) - 1)
+            return default_year
+
         """Convert various HSBC date formats to YYYY-MM-DD."""
         # DD Mon YYYY or DD Mon YY
         m = re.match(r"(\d{1,2})\s+(\w{3})\s+(\d{2,4})", date_str)
@@ -253,7 +265,7 @@ class HSBCPDFParser(BaseParser):
             month = MONTH_MAP.get(mon, "")
             if not month:
                 return ""
-            return f"{default_year}-{month}-{day.zfill(2)}"
+            return f"{infer_year(month)}-{month}-{day.zfill(2)}"
 
         # DD/MM/YYYY
         m = re.match(r"(\d{1,2})/(\d{2})/(\d{2,4})", date_str)
@@ -267,7 +279,7 @@ class HSBCPDFParser(BaseParser):
         m = re.match(r"(\d{1,2})/(\d{2})", date_str)
         if m:
             day, month = m.group(1), m.group(2)
-            return f"{default_year}-{month}-{day.zfill(2)}"
+            return f"{infer_year(month)}-{month}-{day.zfill(2)}"
 
         return ""
 

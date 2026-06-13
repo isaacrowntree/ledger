@@ -49,13 +49,18 @@ SKIP_PATTERNS = [
 
 # Lines that signal the disclaimer/footer — exit transactions mode when seen,
 # otherwise their text gets appended onto the last transaction's description.
+# Case-insensitive: the PDFs use lowercase headings ("important information
+# about your Bankwest..."), mixed-case legalese ("Misused, Lost or Stolen"), etc.
 STOP_PATTERNS = [
-    re.compile(r"^Ways to pay"),
-    re.compile(r"^Important information about your"),
-    re.compile(r"^Other information"),
-    re.compile(r"^Unauthorised or unknown transactions"),
-    re.compile(r"^Misused, lost or stolen"),
-    re.compile(r"® Registered to BPAY"),
+    re.compile(r"^Ways to pay", re.IGNORECASE),
+    re.compile(r"^Important information about your", re.IGNORECASE),
+    re.compile(r"^Other information", re.IGNORECASE),
+    re.compile(r"^Unauthorised or unknown transactions", re.IGNORECASE),
+    re.compile(r"^Misused, lost or stolen", re.IGNORECASE),
+    re.compile(r"® Registered to BPAY", re.IGNORECASE),
+    re.compile(r"^continued on next page", re.IGNORECASE),
+    re.compile(r"^Closing Balance\b", re.IGNORECASE),
+    re.compile(r"^Page \d+ of \d+", re.IGNORECASE),
 ]
 
 

@@ -15,6 +15,7 @@ class DuplicatePair:
     id1: int
     id2: int
     date: str
+    date2: str
     amount: float
     desc1: str
     desc2: str
@@ -52,7 +53,7 @@ def find_duplicates(conn: sqlite3.Connection) -> list[DuplicatePair]:
     """Find likely duplicate transactions across accounts.
 
     Criteria:
-    - Same date
+    - Dates within 2 days (PayPal settles 1-2 days after the card posting)
     - Same amount (within $0.01)
     - Different accounts
     - Neither currently marked as transfer
@@ -61,12 +62,12 @@ def find_duplicates(conn: sqlite3.Connection) -> list[DuplicatePair]:
     """
     rows = conn.execute("""
         SELECT t1.id as id1, t2.id as id2,
-               t1.date, t1.amount,
+               t1.date, t2.date as date2, t1.amount,
                t1.description as desc1, t2.description as desc2,
                a1.name as account1, a2.name as account2,
                a1.source_type as st1, a2.source_type as st2
         FROM transactions t1
-        JOIN transactions t2 ON t1.date = t2.date
+        JOIN transactions t2 ON t2.date BETWEEN date(t1.date, '-2 days') AND date(t1.date, '+2 days')
             AND ABS(t1.amount - t2.amount) < 0.01
             AND t1.id < t2.id
             AND t1.account_id != t2.account_id
@@ -82,7 +83,7 @@ def find_duplicates(conn: sqlite3.Connection) -> list[DuplicatePair]:
     for r in rows:
         pair = DuplicatePair(
             id1=r["id1"], id2=r["id2"],
-            date=r["date"], amount=r["amount"],
+            date=r["date"], date2=r["date2"], amount=r["amount"],
             desc1=r["desc1"], desc2=r["desc2"],
             account1=r["account1"], account2=r["account2"],
             source_type1=r["st1"], source_type2=r["st2"],
@@ -102,11 +103,13 @@ def _is_likely_duplicate(pair: DuplicatePair) -> bool:
     d1 = pair.desc1.upper()
     d2 = pair.desc2.upper()
 
-    # PayPal ↔ bank: bank side says "PAYPAL *..."
+    # PayPal ↔ bank: bank side says "PAYPAL *..." and the other side IS the
+    # PayPal account. Without the counterpart check, any same-amount transaction
+    # near a "PAYPAL *" charge gets falsely paired.
     for pattern, source_type in CROSS_ACCOUNT_PATTERNS:
-        if pair.source_type2 == source_type and pattern in d2:
+        if pair.source_type2 == source_type and pattern in d2 and pair.source_type1 == "paypal":
             return True
-        if pair.source_type1 == source_type and pattern in d1:
+        if pair.source_type1 == source_type and pattern in d1 and pair.source_type2 == "paypal":
             return True
 
     # ING ↔ ING: same transaction on linked accounts
@@ -119,11 +122,14 @@ def _is_likely_duplicate(pair: DuplicatePair) -> bool:
             return True
 
         # Same merchant name appearing on both accounts
-        # ING linked accounts show the same transaction with slightly different formatting
-        merchant1 = _extract_merchant(d1)
-        merchant2 = _extract_merchant(d2)
-        if merchant1 and merchant2 and (merchant1 in merchant2 or merchant2 in merchant1):
-            return True
+        # ING linked accounts show the same transaction with slightly different formatting.
+        # Merchant match is weaker evidence than a receipt number, so require the exact
+        # same date to avoid flagging recurring same-amount purchases as duplicates.
+        if pair.date == pair.date2:
+            merchant1 = _extract_merchant(d1)
+            merchant2 = _extract_merchant(d2)
+            if merchant1 and merchant2 and (merchant1 in merchant2 or merchant2 in merchant1):
+                return True
 
     return False
 
@@ -174,12 +180,12 @@ def resolve_duplicates(
         p2 = SOURCE_PRIORITY.get(pair.source_type2, 0)
 
         if p1 >= p2:
-            mark_id = pair.id2  # Mark side 2 as transfer
+            keep_id, mark_id = pair.id1, pair.id2
             keep_desc = pair.desc1[:50]
             mark_desc = pair.desc2[:50]
             mark_acct = pair.account2
         else:
-            mark_id = pair.id1  # Mark side 1 as transfer
+            keep_id, mark_id = pair.id2, pair.id1
             keep_desc = pair.desc2[:50]
             mark_desc = pair.desc1[:50]
             mark_acct = pair.account1
@@ -192,6 +198,23 @@ def resolve_duplicates(
                 "UPDATE transactions SET is_transfer = 1, category_id = ? WHERE id = ?",
                 (transfers_cat_id, mark_id),
             )
+            # A shared-expense row attached to the transfer side would double-count
+            # (or orphan) the split: move it to the kept side, or drop it if the
+            # kept side already has one.
+            mark_se = conn.execute(
+                "SELECT id FROM shared_expenses WHERE transaction_id = ?", (mark_id,)
+            ).fetchone()
+            if mark_se:
+                keep_se = conn.execute(
+                    "SELECT id FROM shared_expenses WHERE transaction_id = ?", (keep_id,)
+                ).fetchone()
+                if keep_se:
+                    conn.execute("DELETE FROM shared_expenses WHERE id = ?", (mark_se["id"],))
+                else:
+                    conn.execute(
+                        "UPDATE shared_expenses SET transaction_id = ? WHERE id = ?",
+                        (keep_id, mark_se["id"]),
+                    )
 
         updated += 1
 
