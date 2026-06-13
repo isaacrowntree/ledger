@@ -650,14 +650,16 @@ function sharedKeys(item: SharedExpenseItem, dim: SharedDim): string[] {
 }
 
 // Items after the active Category/Tag filter (independent of grouping).
+// "Exclude" inverts the match, so you can drop a tag/category (e.g. the NZ trip).
 function sharedFilteredItems(): SharedExpenseItem[] {
   const data = lastSharedData!;
   const filterVal = (document.getElementById("shared-filter") as HTMLSelectElement)?.value || "";
   if (!filterVal) return data.items;
+  const exclude = (document.getElementById("shared-filter-exclude") as HTMLInputElement)?.checked;
   const sep = filterVal.indexOf(":");
   const dim = filterVal.slice(0, sep) as SharedDim;
   const val = filterVal.slice(sep + 1);
-  return data.items.filter((i) => sharedKeys(i, dim).includes(val));
+  return data.items.filter((i) => sharedKeys(i, dim).includes(val) !== exclude);
 }
 
 // One Filter dropdown spanning both dimensions, grouped with <optgroup>.
@@ -1171,6 +1173,7 @@ document.getElementById("tax-fy")?.addEventListener("change", loadTax);
 document.getElementById("shared-hide-settled")?.addEventListener("change", rerenderShared);
 document.getElementById("shared-group-by")?.addEventListener("change", rerenderShared);
 document.getElementById("shared-filter")?.addEventListener("change", rerenderShared);
+document.getElementById("shared-filter-exclude")?.addEventListener("change", rerenderShared);
 document.getElementById("econ-year")?.addEventListener("change", loadEconomics);
 document.getElementById("econ-sync-cpi")?.addEventListener("click", async () => {
   const btn = document.getElementById("econ-sync-cpi") as HTMLButtonElement;
