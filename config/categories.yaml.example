@@ -69,6 +69,9 @@ categories:
   # Mortgage
   - name: Mortgage
 
+  # Tax (ATO payments and refunds)
+  - name: Tax
+
   # Other
   - name: Uncategorized
 
@@ -89,6 +92,11 @@ rules:
   - type: regex
     pattern: "TWILIO|GOOGLE.?GSUITE|GITHUB|GITLAB|JETBRAINS|FIGMA|CANVA|ADOBE|OPENAI|ANTHROPIC"
     category: "Business: Software & Subscriptions"
+
+  # --- Tax (ATO) — before Transfers, so ATO BPAY payments aren't caught as transfers ---
+  - type: regex
+    pattern: "ATO PAYMENT|AUSTRALIAN TAXATION|TAXATION OFFICE|\\bATO ATO\\d"
+    category: Tax
 
   # --- Income ---
   - type: regex
@@ -266,3 +274,7 @@ tag_rules:
     pattern: "MORTGAGE|OFFSET FACILITY|INTEREST CHARGE"
   - tag: strata
     pattern: "STRATA|BODY CORP"
+
+  # Tax
+  - tag: tax
+    pattern: "ATO PAYMENT|AUSTRALIAN TAXATION|\\bATO ATO\\d"
