@@ -118,7 +118,18 @@
           <label class="checkbox-label">
             <input type="checkbox" id="shared-hide-settled" /> Hide settled
           </label>
+          <label>Group by
+            <select id="shared-group-by">
+              <option value="none">None</option>
+              <option value="category">Category</option>
+              <option value="tag">Tag</option>
+            </select>
+          </label>
+          <label>Filter
+            <select id="shared-filter"></select>
+          </label>
         </div>
+        <div class="shared-breakdown" id="shared-breakdown"></div>
         <table id="shared-table">
           <thead>
             <tr>
@@ -128,6 +139,7 @@
               <th>Split %</th>
               <th>Owed</th>
               <th>Category</th>
+              <th>Tags</th>
               <th>Settled</th>
               <th></th>
             </tr>

@@ -66,8 +66,9 @@ class ColesCreditPDFParser(BaseParser):
     def parse(self, file_path: Path) -> list[RawTransaction]:
         text = self._extract_text(file_path)
         statement_year = self._detect_year(text)
+        statement_end_month = self._detect_end_month(text)
         closing_balance = self._extract_closing_balance(text)
-        entries = self._parse_entries(text, statement_year)
+        entries = self._parse_entries(text, statement_year, statement_end_month)
 
         transactions = []
         for entry in entries:
@@ -116,7 +117,31 @@ class ColesCreditPDFParser(BaseParser):
                 return ym.group(1)
         return "2025"
 
-    def _parse_entries(self, text: str, year: str) -> list[dict]:
+    def _detect_end_month(self, text: str) -> int | None:
+        """Find the month the statement period ends in, for year-rollover handling.
+
+        A statement spanning Dec-Jan lists December transactions without a year;
+        they belong to the year BEFORE the statement year. Knowing the end month
+        lets _normalize_date detect this.
+        """
+        m = re.search(r"Statement Period\s+\d{1,2}/\d{2}/\d{2}\s+-\s+\d{1,2}/(\d{2})/\d{2}", text)
+        if m:
+            return int(m.group(1))
+        m = re.search(
+            r"Statement\s+Ends[:\s]+\d{1,2}\s+"
+            r"(January|February|March|April|May|June|July|August|September|October|November|December)",
+            text, re.IGNORECASE,
+        )
+        if not m:
+            m = re.search(
+                r"(January|February|March|April|May|June|July|August|September|October|November|December)"
+                r"\s+20\d{2}", text,
+            )
+        if m:
+            return int(MONTH_MAP[m.group(1)[:3].title()])
+        return None
+
+    def _parse_entries(self, text: str, year: str, end_month: int | None = None) -> list[dict]:
         lines = text.split("\n")
         entries = []
         current = None
@@ -169,7 +194,7 @@ class ColesCreditPDFParser(BaseParser):
 
                 amount, is_credit, desc = self._extract_amount(rest)
                 current = {
-                    "date": self._normalize_date(date_str, year),
+                    "date": self._normalize_date(date_str, year, end_month),
                     "description": desc,
                     "amount": amount,
                     "is_credit": is_credit,
@@ -260,7 +285,14 @@ class ColesCreditPDFParser(BaseParser):
             },
         )
 
-    def _normalize_date(self, date_str: str, default_year: str) -> str:
+    def _normalize_date(self, date_str: str, default_year: str, end_month: int | None = None) -> str:
+        def infer_year(month: str) -> str:
+            # Year-rollover: on a statement ending in e.g. January, a December
+            # transaction belongs to the previous year.
+            if end_month and int(month) > end_month:
+                return str(int(default_year) - 1)
+            return default_year
+
         # DD Mon YYYY
         m = re.match(r"(\d{1,2})\s+(\w{3})\s+(\d{2,4})", date_str)
         if m:
@@ -279,7 +311,7 @@ class ColesCreditPDFParser(BaseParser):
             month = MONTH_MAP.get(mon, "")
             if not month:
                 return ""
-            return f"{default_year}-{month}-{day.zfill(2)}"
+            return f"{infer_year(month)}-{month}-{day.zfill(2)}"
 
         # Mon DD (old Coles format, e.g. "Dec 13")
         m = re.match(r"(\w{3})\s+(\d{1,2})", date_str)
@@ -288,7 +320,7 @@ class ColesCreditPDFParser(BaseParser):
             month = MONTH_MAP.get(mon, "")
             if not month:
                 return ""
-            return f"{default_year}-{month}-{day.zfill(2)}"
+            return f"{infer_year(month)}-{month}-{day.zfill(2)}"
 
         # DD/MM/YYYY
         m = re.match(r"(\d{1,2})/(\d{2})/(\d{2,4})", date_str)

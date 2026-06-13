@@ -287,6 +287,14 @@ export interface SharedExpenseItem {
   category_name: string | null;
   account_name: string | null;
   share_amount: number;
+  tags: string[];
+}
+
+export interface SharedGroup {
+  key: string;
+  total_shared: number;
+  total_settled: number;
+  balance_owing: number;
 }
 
 export interface SharedExpensesResponse {
@@ -294,6 +302,8 @@ export interface SharedExpensesResponse {
   total_shared: number;
   total_settled: number;
   balance_owing: number;
+  by_category: SharedGroup[];
+  by_tag: SharedGroup[];
 }
 
 export interface EconomicsSummary {

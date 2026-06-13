@@ -60,9 +60,21 @@ nav { display: flex; gap: 0.5rem; }
 /* Filters */
 .filters-bar {
   display: flex;
-  gap: 0.5rem;
+  align-items: center;
+  gap: 0.75rem;
   margin-bottom: 1rem;
   flex-wrap: wrap;
+}
+
+/* Inline field labels (e.g. "Group by", "Filter") read as one unit with their
+   control: dim caption text, small gap, vertically centred. */
+.filters-bar > label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.875rem;
+  color: var(--text-dim);
+  white-space: nowrap;
 }
 
 .filters-bar input,
@@ -73,6 +85,11 @@ nav { display: flex; gap: 0.5rem; }
   padding: 0.4rem 0.6rem;
   border-radius: 6px;
   font-size: 0.875rem;
+}
+
+.filters-bar select:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 /* Charts */
@@ -571,4 +588,110 @@ tr:hover { background: var(--surface); }
   header { flex-direction: column; align-items: flex-start; gap: 0.5rem; }
   .econ-split { grid-template-columns: 1fr; }
   .waterfall-row { grid-template-columns: 80px 1fr 80px; }
+}
+
+/* --- Shared expenses: tags, grouping, breakdown --- */
+.tag-chip {
+  display: inline-block;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.05rem 0.5rem;
+  font-size: 0.72rem;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+tr.group-header td {
+  background: var(--surface);
+  font-weight: 600;
+  border-top: 2px solid var(--accent);
+}
+.muted { color: var(--text-dim); font-weight: 400; }
+
+/* Pivot card: balance owing by category/tag */
+.shared-breakdown { margin: 0 0 1.25rem; }
+.shared-breakdown:empty { display: none; }
+.pivot-card {
+  display: inline-block;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.75rem 1rem 0.5rem;
+  max-width: 100%;
+  overflow-x: auto;
+}
+.pivot-title {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-dim);
+  margin-bottom: 0.5rem;
+}
+.breakdown-table {
+  border-collapse: collapse;
+  width: 100%;
+  min-width: 380px;
+}
+.breakdown-table th,
+.breakdown-table td {
+  padding: 0.3rem 0.5rem;
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+.breakdown-table th {
+  text-align: left;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+  font-weight: 500;
+  border-bottom: 1px solid var(--border);
+}
+.breakdown-table td:first-child,
+.breakdown-table th:first-child { padding-left: 0; }
+.breakdown-table .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.breakdown-table td.negative { color: var(--red); }
+.breakdown-table tbody tr:hover { background: rgba(255, 255, 255, 0.03); }
+.pivot-total td {
+  border-top: 1px solid var(--border);
+  font-weight: 600;
+  padding-top: 0.45rem;
+}
+
+.empty-row {
+  text-align: center;
+  color: var(--text-dim);
+  padding: 1.5rem 0.5rem;
+  font-size: 0.85rem;
+}
+
+/* --- Table text layout: keep dates/amounts on one line, align numbers --- */
+/* Numbers use tabular figures so columns line up; never wrap mid-value. */
+#shared-table td:nth-child(1),  /* Date */
+#shared-table td:nth-child(3),  /* Full amount */
+#shared-table td:nth-child(4),  /* Split % (keeps the % next to the input) */
+#shared-table td:nth-child(5),  /* Owed */
+#shared-table td:nth-child(8),  /* Settled */
+#shared-table td:last-child,    /* Remove button */
+#txn-table td:nth-child(1),     /* Date */
+#txn-table td:nth-child(3) {    /* Amount */
+  white-space: nowrap;
+}
+
+#shared-table td:nth-child(3),
+#shared-table td:nth-child(5),
+#txn-table td:nth-child(3),
+.breakdown-table td:nth-child(n+2),
+.card-value {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Let the long free-text columns absorb the slack and wrap cleanly. */
+#shared-table td:nth-child(2),  /* Description */
+#txn-table td:nth-child(2) {    /* Description */
+  width: 100%;
+  word-break: break-word;
 }
