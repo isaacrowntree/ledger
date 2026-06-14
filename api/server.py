@@ -10,11 +10,13 @@ from etl.dedup import find_duplicates, resolve_duplicates
 from etl.tax_calc import calculate_total_tax, get_tax_dollar_breakdown
 from etl.splitter import load_tax_config
 from etl import rental as rental_calc
+from etl import schedules as sched_calc
 
 PROJECT_ROOT = Path(__file__).parent.parent
 FRONTEND_DIST = PROJECT_ROOT / "frontend" / "dist"
 CONFIG_DIR = PROJECT_ROOT / "config"
 TAX_CONFIG_PATH = CONFIG_DIR / "tax.yaml"
+SCHEDULES_CONFIG_PATH = CONFIG_DIR / "schedules.yaml"
 
 app = Flask(__name__, static_folder=str(FRONTEND_DIST), static_url_path="")
 CORS(app)
@@ -1548,6 +1550,28 @@ def api_shared_expenses():
         "balance_owing": round(total_shared - total_settled, 2),
         "by_category": finalize(by_category),
         "by_tag": finalize(by_tag),
+    })
+
+
+@app.route("/api/schedules")
+def api_schedules():
+    """Recurring shared schedules (rent, repayments, ...) from config."""
+    from datetime import date
+
+    conn = get_conn()
+    config = sched_calc.load_schedules_config(SCHEDULES_CONFIG_PATH)
+    as_of = date.today()
+    results = sched_calc.compute_schedules(conn, config, as_of)
+    conn.close()
+
+    total_expected = round(sum(r["expected_to_date"] for r in results), 2)
+    total_paid = round(sum(r["paid"] for r in results), 2)
+    return jsonify({
+        "as_of": as_of.isoformat(),
+        "schedules": results,
+        "total_expected": total_expected,
+        "total_paid": total_paid,
+        "total_owing": round(total_expected - total_paid, 2),
     })
 
 
