@@ -297,6 +297,45 @@ export interface SharedGroup {
   balance_owing: number;
 }
 
+export interface ScheduleOccurrence {
+  date: string;
+  amount: number;
+  their_share: number;
+}
+
+export interface SchedulePayment {
+  date: string;
+  description: string;
+  amount: number;
+}
+
+export interface RecurringSchedule {
+  name: string;
+  counterparty: string | null;
+  frequency: string;
+  amount: number;
+  their_pct: number;
+  their_share: number;
+  start: string;
+  notes: string;
+  occurrences: ScheduleOccurrence[];
+  num_due: number;
+  expected_to_date: number;
+  next_due: string;
+  settle_enabled: boolean;
+  payments: SchedulePayment[];
+  paid: number;
+  balance_owing: number;
+}
+
+export interface SchedulesResponse {
+  as_of: string;
+  schedules: RecurringSchedule[];
+  total_expected: number;
+  total_paid: number;
+  total_owing: number;
+}
+
 export interface SharedExpensesResponse {
   items: SharedExpenseItem[];
   total_shared: number;
@@ -416,6 +455,9 @@ export const api = {
 
   deleteSharedExpense: (id: number) =>
     del<{ ok: boolean }>(`/shared-expenses/${id}`),
+
+  recurringSchedules: () =>
+    get<SchedulesResponse>(`${BASE}/schedules`),
 
   economicsSummary: (year?: string) =>
     get<EconomicsSummary>(`${BASE}/summary/economics`, year ? { year } : undefined),

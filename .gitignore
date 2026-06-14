@@ -2,6 +2,7 @@
 config/accounts.yaml
 config/categories.yaml
 config/tax.yaml
+config/schedules.yaml
 
 # Personal data
 data/

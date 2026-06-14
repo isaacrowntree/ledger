@@ -1,0 +1,25 @@
+# Recurring shared schedules.
+#
+# A generic, config-driven replacement for the per-arrangement tabs in the old
+# budget spreadsheet (rent, loan repayments, shared subscriptions, ...). Each
+# entry is expanded into occurrences from `start` on the given `frequency`, and
+# the counterparty's share is tracked against any payments they've made.
+#
+# Copy to config/schedules.yaml (gitignored) and edit with real values.
+
+schedules:
+  - name: Mortgage – 39 Kent Rd Mascot
+    start: 2026-06-01
+    frequency: fortnightly      # weekly | fortnightly | monthly
+    amount: 1177.81             # full recurring amount (per occurrence)
+    counterparty: Silvana
+    their_pct: 40               # the counterparty's share of each occurrence
+    notes: 60/40 split — Isaac pays the larger share
+
+    # Optional: auto-reconcile what the counterparty has actually paid.
+    # Incoming transactions (amount > 0) on/after `start` that match are summed
+    # and subtracted from what they owe. Omit `settle` to track expected-only
+    # and tick payments off manually.
+    settle:
+      match_tag: silvana-rent   # incoming txns carrying this tag count as payments
+      # match_category: Rent Income   # ...or match by category instead/as well

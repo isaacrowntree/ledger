@@ -10,7 +10,7 @@ let allCategories: Category[] = [];
 
 const VALID_VIEWS = new Set([
   "dashboard", "transactions", "budget", "trends", "year-review",
-  "financial-year", "shared-expenses", "tax", "economics",
+  "financial-year", "shared-expenses", "recurring", "tax", "economics",
 ]);
 
 function activateTab(viewId: string) {
@@ -53,6 +53,8 @@ async function loadView(view: string) {
       return loadSpreadsheet();
     case "shared-expenses":
       return loadSharedExpenses();
+    case "recurring":
+      return loadRecurring();
     case "tax":
       return loadTax();
     case "economics":
@@ -1027,6 +1029,72 @@ function renderWaterfall(salary: number, tax: EconomicsSummary["tax_analysis"]):
 
 function fmt(val: number): string {
   return Math.abs(val).toLocaleString("en-AU", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+// --- Recurring Schedules Tab ---
+
+async function loadRecurring() {
+  const data = await api.recurringSchedules();
+  renderRecurring(data);
+}
+
+function renderRecurring(data: import("./api").SchedulesResponse) {
+  const summary = document.getElementById("recurring-summary")!;
+  summary.innerHTML = `
+    <div class="summary-cards">
+      <div class="card expense">
+        <div class="card-label">Expected to date</div>
+        <div class="card-value">$${fmt(data.total_expected)}</div>
+      </div>
+      <div class="card income">
+        <div class="card-label">Paid</div>
+        <div class="card-value">$${fmt(data.total_paid)}</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Balance owing</div>
+        <div class="card-value ${data.total_owing > 0 ? "negative" : ""}">$${fmt(data.total_owing)}</div>
+      </div>
+    </div>`;
+
+  const el = document.getElementById("recurring-content")!;
+  if (!data.schedules.length) {
+    el.innerHTML = `<p class="muted">No recurring schedules configured. Add them to <code>config/schedules.yaml</code>.</p>`;
+    return;
+  }
+
+  el.innerHTML = data.schedules.map((s) => {
+    const owingClass = s.balance_owing > 0 ? "negative" : "muted";
+    const settleNote = s.settle_enabled
+      ? `${s.payments.length} payment${s.payments.length === 1 ? "" : "s"} matched`
+      : "manual tracking (no payment matching configured)";
+    return `
+      <div class="pivot-card">
+        <div class="pivot-title">${escapeHtml(s.name)}</div>
+        <table class="mini-table">
+          <tbody>
+            <tr><td>Counterparty</td><td class="num">${escapeHtml(s.counterparty || "—")}</td></tr>
+            <tr><td>${escapeHtml(s.frequency)} amount</td><td class="num">$${fmt(s.amount)}</td></tr>
+            <tr><td>Their share (${s.their_pct}%)</td><td class="num">$${fmt(s.their_share)}</td></tr>
+            <tr><td>Occurrences due (since ${s.start})</td><td class="num">${s.num_due}</td></tr>
+            <tr><td>Expected to date</td><td class="num">$${fmt(s.expected_to_date)}</td></tr>
+            <tr><td>Paid</td><td class="num">$${fmt(s.paid)}</td></tr>
+            <tr><td><strong>Balance owing</strong></td><td class="num ${owingClass}"><strong>$${fmt(s.balance_owing)}</strong></td></tr>
+            <tr><td>Next due</td><td class="num">${s.next_due}</td></tr>
+          </tbody>
+        </table>
+        <div class="muted" style="margin:0.25rem 0 0.5rem;">${escapeHtml(settleNote)}${s.notes ? " · " + escapeHtml(s.notes) : ""}</div>
+        <table class="breakdown-table">
+          <thead><tr><th>Due date</th><th class="num">Full amount</th><th class="num">Their share</th></tr></thead>
+          <tbody>
+            ${s.occurrences.map((o) => `<tr>
+              <td>${o.date}</td>
+              <td class="num muted">$${fmt(o.amount)}</td>
+              <td class="num">$${fmt(o.their_share)}</td>
+            </tr>`).join("")}
+          </tbody>
+        </table>
+      </div>`;
+  }).join("");
 }
 
 async function loadTransactions() {

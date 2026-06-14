@@ -1,0 +1,17 @@
+schedules:
+  - name: Mortgage – Test
+    start: 2026-06-01
+    frequency: fortnightly
+    amount: 1177.81
+    counterparty: Silvana
+    their_pct: 40
+    notes: 60/40 split
+    settle:
+      match_tag: silvana-rent
+
+  - name: Monthly subscription
+    start: 2026-01-15
+    frequency: monthly
+    amount: 100.0
+    counterparty: Flatmate
+    their_pct: 50
