@@ -47,14 +47,17 @@ def load_depreciation(config_path: Path) -> dict:
                 fy = yr.get("fy")
                 if fy is None:  # tolerate a malformed/partial year row
                     continue
-                ded = yr.get("deductible", 0.0)
+                # `or 0.0` coerces an explicit-null amount (hand-edited YAML);
+                # dict.get's default only fires for absent keys, not null values.
+                dec = yr.get("decline") or 0.0
+                ded = yr.get("deductible") or 0.0
                 t = totals.setdefault(fy, {"decline": 0.0, "deductible": 0.0, "taxpayer_deductible": 0.0, "n_assets": 0})
-                t["decline"] += yr.get("decline", 0.0)
+                t["decline"] += dec
                 t["deductible"] += ded
                 t["taxpayer_deductible"] += ded * share
                 t["n_assets"] += 1
                 ft = fy_totals.setdefault(fy, {"decline": 0.0, "deductible": 0.0, "taxpayer_deductible": 0.0})
-                ft["decline"] += yr.get("decline", 0.0)
+                ft["decline"] += dec
                 ft["deductible"] += ded
                 ft["taxpayer_deductible"] += ded * share
         reg["totals"] = {
