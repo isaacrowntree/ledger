@@ -1,0 +1,32 @@
+taxpayers:
+  - id: primary
+    reference:
+      tfn: "111 111 111"
+      name: "Test User"
+      abn: "11111111111"
+    lodged:
+      - fy: 2024
+        fy_label: "FY 2023-24"
+        taxable_income: 180000
+        tax_withheld: 60000
+        carry_forward:
+          - { label: "18V", desc: "Net capital losses carried forward", value: 9000 }
+        sections:
+          - name: "Income"
+            rows:
+              - { code: "1C", desc: "Gross payments", value: 188000 }
+
+  - id: spouse
+    reference:
+      tfn: "222 222 222"
+      name: "Test Spouse"
+    lodged:
+      - fy: 2025
+        fy_label: "FY 2024-25"
+        taxable_income: 95000
+        tax_withheld: 23000
+        carry_forward: []
+        sections:
+          - name: "Income"
+            rows:
+              - { code: "1C", desc: "Gross payments", value: 101000 }

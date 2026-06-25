@@ -400,6 +400,41 @@ tr:hover { background: var(--surface); }
   padding-top: 0.5rem;
 }
 
+/* Lodgement Tab */
+.lodge-carry {
+  border-left: 3px solid var(--green);
+}
+.lodge-table td:first-child,
+.lodge-table th:first-child {
+  width: 4.5rem;
+}
+.lodge-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.72rem;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+td.lodge-val { text-align: right; }
+.lodge-copy {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.8rem;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 0.1rem 0.4rem;
+  cursor: pointer;
+  color: inherit;
+}
+.lodge-copy:hover {
+  border-color: var(--border);
+  background: var(--bg);
+}
+.lodge-val.negative .lodge-copy { color: var(--red); }
+.lodge-copy.copied {
+  color: var(--green);
+  border-color: var(--green);
+}
+
 /* Spreadsheet Tab */
 .ss-tabs {
   display: flex;

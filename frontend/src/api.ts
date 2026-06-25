@@ -199,6 +199,43 @@ export interface WorkTripsResponse {
   };
 }
 
+export interface ATOLabelRow {
+  code: string;
+  desc: string;
+  value: number | string;
+}
+
+export interface ATOLodgedYear {
+  fy: number;
+  fy_label: string;
+  receipt?: string;
+  taxable_income: number;
+  tax_withheld: number;
+  carry_forward: ATOLabelRow[];
+  sections: { name: string; rows: ATOLabelRow[] }[];
+}
+
+export interface ATOTaxpayer {
+  id: string;
+  name: string;
+  reference: {
+    tfn?: string;
+    name?: string;
+    date_of_birth?: string;
+    abn?: string;
+    business_name?: string;
+    occupation?: string;
+    health_insurer?: { id?: string; membership?: string };
+    spouse?: { name?: string; date_of_birth?: string };
+  };
+  lodged: ATOLodgedYear[];
+  latest_carry_forward: (ATOLabelRow & { from_fy: number; from_fy_label: string })[];
+}
+
+export interface ATOLodgedResponse {
+  taxpayers: ATOTaxpayer[];
+}
+
 export interface ATOReturn {
   fy: number;
   fy_label: string;
@@ -437,6 +474,9 @@ export const api = {
 
   atoReturn: (fy?: string) =>
     get<ATOReturn>(`${BASE}/ato/return`, fy ? { fy } : undefined),
+
+  atoLodged: () =>
+    get<ATOLodgedResponse>(`${BASE}/ato/lodged`),
 
   updateSplit: (txnId: number, data: { business_name: string; business_pct: number }) =>
     patch<{ ok: boolean }>(`/transactions/${txnId}/split`, data),

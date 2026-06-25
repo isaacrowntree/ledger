@@ -1,0 +1,65 @@
+# Lodged ATO tax returns — historical archive.
+#
+# Captures the figures you actually LODGED each financial year, keyed by ATO
+# label code (1C, 10L, 18V, D5, ...). Two jobs:
+#   1. Reference: static fields (TFN, ABN, health insurer, spouse) you re-enter
+#      every year at lodgement time.
+#   2. Carry-forward: balances that flow INTO a later return — net capital
+#      losses [18V] and deferred non-commercial business losses [P9].
+#
+# Holds one or more TAXPAYERS — e.g. a couple lodging linked returns, each with
+# their own TFN. Surfaced in the UI under the "Lodgement" tab as copy-to-clipboard
+# rows so you can paste straight into myTax. This is an archival record of what was
+# filed — it is NOT recomputed from transactions.
+#
+# Copy to config/ato_returns.yaml (gitignored — contains TFNs) and fill in.
+# To add an older year later, append another entry under that taxpayer's
+# `lodged:` list in the same shape; the UI picks it up automatically.
+
+taxpayers:
+  - id: primary                  # short stable key (used in the UI selector)
+    reference:
+      tfn: "000 000 000"
+      name: "Your Name"
+      date_of_birth: "1900-01-01"
+      abn: "00000000000"         # your sole-trader / business ABN (omit if none)
+      business_name: "My Business"
+      occupation: "Software Engineer"
+      health_insurer:
+        id: "AAA"                # insurer ID on your statement
+        membership: "000000"
+      spouse:
+        name: "Spouse Name"
+        date_of_birth: "1900-01-01"
+
+    # Most recent first. fy = year the financial year ENDS (2024 = FY 2023-24).
+    lodged:
+      - fy: 2024
+        fy_label: "FY 2023-24"
+        receipt: "0000 0000 0000"
+        taxable_income: 0
+        tax_withheld: 0
+        # Balances that apply to the NEXT return — pinned at the top of the view.
+        carry_forward:
+          - { label: "18V", desc: "Net capital losses carried forward", value: 0 }
+          - { label: "P9",  desc: "Deferred non-commercial business loss", value: 0 }
+        # Label rows grouped by myTax section, in lodged order.
+        sections:
+          - name: "Income"
+            rows:
+              - { code: "1C",  desc: "Gross payments (salary)", value: 0 }
+              - { code: "1",   desc: "Tax withheld - salary", value: 0 }
+              - { code: "10L", desc: "Gross interest", value: 0 }
+          - name: "Deductions"
+            rows:
+              - { code: "D5",  desc: "Other work-related expenses", value: 0 }
+
+  # Add your spouse as a second taxpayer with their own TFN and lodged years:
+  # - id: spouse
+  #   reference:
+  #     tfn: "111 111 111"
+  #     name: "Spouse Name"
+  #     ...
+  #   lodged:
+  #     - fy: 2025
+  #       ...

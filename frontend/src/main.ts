@@ -1,4 +1,4 @@
-import { api, type Transaction, type Category, type AccountSummary, type Holding, type TaxSummary, type ATOReturn, type SharedExpenseItem, type SharedExpensesResponse, type EconomicsSummary } from "./api";
+import { api, type Transaction, type Category, type AccountSummary, type Holding, type TaxSummary, type ATOReturn, type ATOLodgedResponse, type ATOTaxpayer, type ATOLabelRow, type SharedExpenseItem, type SharedExpensesResponse, type EconomicsSummary } from "./api";
 import { renderMonthlyChart, renderCategoryChart, renderTrendsChart, renderTaxBreakdownChart, renderCpiHistoryChart } from "./charts";
 import { populateFilters, getTransactionFilters } from "./filters";
 import { initSpreadsheet, loadSpreadsheet } from "./spreadsheet";
@@ -10,7 +10,7 @@ let allCategories: Category[] = [];
 
 const VALID_VIEWS = new Set([
   "dashboard", "transactions", "budget", "trends", "year-review",
-  "financial-year", "shared-expenses", "recurring", "tax", "economics",
+  "financial-year", "shared-expenses", "recurring", "tax", "lodgement", "economics",
 ]);
 
 function activateTab(viewId: string) {
@@ -57,6 +57,8 @@ async function loadView(view: string) {
       return loadRecurring();
     case "tax":
       return loadTax();
+    case "lodgement":
+      return loadLodgement();
     case "economics":
       return loadEconomics();
   }
@@ -463,6 +465,166 @@ function renderATOReturn(data: ATOReturn) {
     ` : ""}
   `;
 }
+
+// --- Lodgement Tab (archived lodged ATO returns) ---
+
+let lodgedData: ATOLodgedResponse | null = null;
+
+async function loadLodgement() {
+  if (!lodgedData) {
+    lodgedData = await api.atoLodged();
+    // Populate the taxpayer selector (hidden when there's only one).
+    const tpSel = document.getElementById("lodgement-taxpayer") as HTMLSelectElement | null;
+    if (tpSel && tpSel.options.length === 0) {
+      for (const tp of lodgedData.taxpayers) {
+        const opt = document.createElement("option");
+        opt.value = tp.id;
+        opt.textContent = tp.name;
+        tpSel.appendChild(opt);
+      }
+      tpSel.style.display = lodgedData.taxpayers.length > 1 ? "" : "none";
+    }
+    syncLodgementFYOptions();
+  }
+  renderLodgement();
+}
+
+function currentTaxpayer(): ATOTaxpayer | null {
+  if (!lodgedData || !lodgedData.taxpayers.length) return null;
+  const id = (document.getElementById("lodgement-taxpayer") as HTMLSelectElement | null)?.value;
+  return lodgedData.taxpayers.find((t) => t.id === id) ?? lodgedData.taxpayers[0];
+}
+
+// Rebuild the FY selector to match the selected taxpayer's lodged years.
+function syncLodgementFYOptions() {
+  const sel = document.getElementById("lodgement-fy") as HTMLSelectElement | null;
+  const tp = currentTaxpayer();
+  if (!sel || !tp) return;
+  sel.innerHTML = "";
+  for (const y of tp.lodged) {
+    const opt = document.createElement("option");
+    opt.value = String(y.fy);
+    opt.textContent = y.fy_label;
+    sel.appendChild(opt);
+  }
+}
+
+function copyValue(v: number | string): string {
+  // What gets written to the clipboard: plain number (no $, no commas) or the
+  // raw string for Y/N style answers.
+  return typeof v === "number" ? String(v) : String(v);
+}
+
+function displayValue(v: number | string): string {
+  if (typeof v !== "number") return escapeHtml(v);
+  return `${v < 0 ? "-" : ""}$${fmt(Math.abs(v))}`;
+}
+
+function labelRowsHtml(rows: ATOLabelRow[]): string {
+  return rows.map((r) => `
+    <tr>
+      <td class="lodge-code">${escapeHtml(r.code)}</td>
+      <td>${escapeHtml(r.desc)}</td>
+      <td class="lodge-val ${typeof r.value === "number" && r.value < 0 ? "negative" : ""}">
+        <button class="lodge-copy" data-copy="${escapeHtml(copyValue(r.value))}"
+                title="Copy ${escapeHtml(copyValue(r.value))}">${displayValue(r.value)}</button>
+      </td>
+    </tr>
+  `).join("");
+}
+
+function renderLodgement() {
+  const el = document.getElementById("lodgement-content")!;
+  const tp = currentTaxpayer();
+
+  if (!tp || !tp.lodged.length) {
+    el.innerHTML = `<p class="tax-hint">No lodged returns on file. Add them to
+      <code>config/ato_returns.yaml</code> (see the <code>.example</code> template).</p>`;
+    return;
+  }
+
+  const sel = document.getElementById("lodgement-fy") as HTMLSelectElement | null;
+  const selFy = sel?.value ? Number(sel.value) : tp.lodged[0].fy;
+  const year = tp.lodged.find((y) => y.fy === selFy) ?? tp.lodged[0];
+
+  const ref = tp.reference || {};
+  const cf = tp.latest_carry_forward || [];
+
+  el.innerHTML = `
+    ${cf.length ? `
+      <div class="tax-section lodge-carry">
+        <h3>⤳ Carry-forward into your next return</h3>
+        <p class="tax-hint">From ${escapeHtml(cf[0].from_fy_label)} — apply these when preparing the following year.</p>
+        <table class="tax-table">
+          <tbody>${labelRowsHtml(cf)}</tbody>
+        </table>
+      </div>
+    ` : ""}
+
+    <div class="tax-section">
+      <h3>Reference (same every year)</h3>
+      <table class="tax-table">
+        <tbody>
+          ${ref.tfn ? `<tr><td>TFN</td><td class="lodge-val"><button class="lodge-copy" data-copy="${escapeHtml((ref.tfn||"").replace(/\s/g,""))}">${escapeHtml(ref.tfn)}</button></td></tr>` : ""}
+          ${ref.abn ? `<tr><td>ABN (${escapeHtml(ref.business_name||"")})</td><td class="lodge-val"><button class="lodge-copy" data-copy="${escapeHtml(ref.abn)}">${escapeHtml(ref.abn)}</button></td></tr>` : ""}
+          ${ref.occupation ? `<tr><td>Occupation</td><td>${escapeHtml(ref.occupation)}</td></tr>` : ""}
+          ${ref.health_insurer?.id ? `<tr><td>Private health</td><td>${escapeHtml(ref.health_insurer.id)} · membership ${escapeHtml(ref.health_insurer.membership||"")}</td></tr>` : ""}
+          ${ref.spouse?.name ? `<tr><td>Spouse</td><td>${escapeHtml(ref.spouse.name)} (DOB ${escapeHtml(ref.spouse.date_of_birth||"")})</td></tr>` : ""}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="tax-header">
+      <h2>${escapeHtml(year.fy_label)} — as lodged</h2>
+      <span class="tax-dates">${year.receipt ? "ATO receipt " + escapeHtml(year.receipt) : ""}</span>
+    </div>
+
+    <div class="tax-cards">
+      <div class="card income">
+        <div class="card-label">Taxable income</div>
+        <div class="card-value">$${fmt(year.taxable_income)}</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Tax withheld</div>
+        <div class="card-value">$${fmt(year.tax_withheld)}</div>
+      </div>
+    </div>
+
+    ${year.sections.map((sec) => `
+      <div class="tax-section">
+        <h3>${escapeHtml(sec.name)}</h3>
+        <table class="tax-table lodge-table">
+          <thead><tr><th>Label</th><th>Item</th><th>Value</th></tr></thead>
+          <tbody>${labelRowsHtml(sec.rows)}</tbody>
+        </table>
+      </div>
+    `).join("")}
+  `;
+}
+
+// Delegated click-to-copy for any lodgement value.
+document.getElementById("lodgement-content")?.addEventListener("click", async (e) => {
+  const btn = (e.target as HTMLElement).closest(".lodge-copy") as HTMLButtonElement | null;
+  if (!btn) return;
+  try {
+    await navigator.clipboard.writeText(btn.dataset.copy || "");
+    const prev = btn.textContent;
+    btn.classList.add("copied");
+    btn.textContent = "✓ copied";
+    setTimeout(() => { btn.textContent = prev; btn.classList.remove("copied"); }, 900);
+  } catch {
+    /* clipboard unavailable (insecure context) — no-op */
+  }
+});
+
+document.getElementById("lodgement-taxpayer")?.addEventListener("change", () => {
+  syncLodgementFYOptions();
+  renderLodgement();
+});
+
+document.getElementById("lodgement-fy")?.addEventListener("change", () => {
+  renderLodgement();
+});
 
 // --- Year Review Tab ---
 
