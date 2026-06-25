@@ -236,6 +236,38 @@ export interface ATOLodgedResponse {
   taxpayers: ATOTaxpayer[];
 }
 
+export interface DepreciationYear {
+  fy: number;
+  opening: number;
+  decline: number;
+  deductible: number;
+  closing: number;
+}
+
+export interface DepreciationAsset {
+  description: string;
+  cost: number;
+  acquired: string;
+  method: string;
+  effective_life: number;
+  taxable_use_pct: number;
+  years: DepreciationYear[];
+}
+
+export interface DepreciationRegister {
+  owner: string;
+  kind: string;
+  ownership_pct: number;
+  method_note?: string;
+  assets: DepreciationAsset[];
+  totals: Record<string, { decline: number; deductible: number; taxpayer_deductible: number; n_assets: number }>;
+}
+
+export interface DepreciationResponse {
+  registers: DepreciationRegister[];
+  fy_totals: Record<string, { decline: number; deductible: number; taxpayer_deductible: number }>;
+}
+
 export interface ATOReturn {
   fy: number;
   fy_label: string;
@@ -477,6 +509,9 @@ export const api = {
 
   atoLodged: () =>
     get<ATOLodgedResponse>(`${BASE}/ato/lodged`),
+
+  depreciation: () =>
+    get<DepreciationResponse>(`${BASE}/depreciation`),
 
   updateSplit: (txnId: number, data: { business_name: string; business_pct: number }) =>
     patch<{ ok: boolean }>(`/transactions/${txnId}/split`, data),
