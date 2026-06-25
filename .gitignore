@@ -3,6 +3,7 @@ config/accounts.yaml
 config/categories.yaml
 config/tax.yaml
 config/schedules.yaml
+config/ato_returns.yaml
 
 # Personal data
 data/

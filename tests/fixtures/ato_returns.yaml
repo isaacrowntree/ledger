@@ -1,0 +1,40 @@
+reference:
+  tfn: "111 111 111"
+  name: "Test User"
+  abn: "11111111111"
+  business_name: "Test Business"
+  health_insurer:
+    id: "TST"
+    membership: "999999"
+  spouse:
+    name: "Test Spouse"
+    date_of_birth: "1980-01-01"
+
+lodged:
+  # Intentionally out of order to exercise the sort.
+  - fy: 2022
+    fy_label: "FY 2021-22"
+    receipt: "1111 1111 1111"
+    taxable_income: 100000
+    tax_withheld: 25000
+    carry_forward:
+      - { label: "P9", desc: "Deferred non-commercial business loss", value: 2717 }
+    sections:
+      - name: "Income"
+        rows:
+          - { code: "1C", desc: "Gross payments", value: 100000 }
+          - { code: "D5", desc: "Other work-related", value: -648 }
+  - fy: 2024
+    fy_label: "FY 2023-24"
+    receipt: "2222 2222 2222"
+    taxable_income: 180000
+    tax_withheld: 60000
+    carry_forward:
+      - { label: "18V", desc: "Net capital losses carried forward", value: 9000 }
+    sections:
+      - name: "Income"
+        rows:
+          - { code: "1C", desc: "Gross payments", value: 188000 }
+      - name: "Capital gains"
+        rows:
+          - { code: "18G", desc: "CGT event during the year?", value: "Y" }

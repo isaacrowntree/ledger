@@ -11,12 +11,14 @@ from etl.tax_calc import calculate_total_tax, get_tax_dollar_breakdown
 from etl.splitter import load_tax_config
 from etl import rental as rental_calc
 from etl import schedules as sched_calc
+from etl import ato_returns as ato_archive
 
 PROJECT_ROOT = Path(__file__).parent.parent
 FRONTEND_DIST = PROJECT_ROOT / "frontend" / "dist"
 CONFIG_DIR = PROJECT_ROOT / "config"
 TAX_CONFIG_PATH = CONFIG_DIR / "tax.yaml"
 SCHEDULES_CONFIG_PATH = CONFIG_DIR / "schedules.yaml"
+ATO_RETURNS_CONFIG_PATH = CONFIG_DIR / "ato_returns.yaml"
 
 app = Flask(__name__, static_folder=str(FRONTEND_DIST), static_url_path="")
 CORS(app)
@@ -1111,6 +1113,20 @@ def api_ato_return():
         "spouse": spouse,
         "summary": summary,
     })
+
+
+# --- Lodged ATO Returns Archive ---
+
+@app.route("/api/ato/lodged")
+def api_ato_lodged():
+    """Historical lodged ATO returns (from config/ato_returns.yaml).
+
+    Archival record of filed figures, keyed by ATO label code, for copy-paste
+    into myTax. Returns one or more taxpayers (a couple lodging linked returns),
+    each with static reference fields, their lodged years, and the latest
+    carry-forward balances that apply to their next return.
+    """
+    return jsonify(ato_archive.load_ato_returns(ATO_RETURNS_CONFIG_PATH))
 
 
 # --- Economics / CPI Endpoints ---
