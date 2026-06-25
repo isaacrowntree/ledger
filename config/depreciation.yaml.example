@@ -1,0 +1,30 @@
+# Depreciation asset register.
+#
+# A per-asset capital-allowances schedule. Each asset carries its written-down
+# value forward year to year (opening → decline → closing), so you can read off
+# this FY's deductible decline and next FY's opening value without re-deriving.
+#
+# Typically exported from the ATO depreciation tool (its CSV gives the full
+# projection to end of effective life). Surfaced in the UI under the
+# "Depreciation" tab. NOT recomputed from transactions.
+#
+# Copy to config/depreciation.yaml (gitignored — personal asset data) and fill in.
+
+registers:
+  - owner: "My Business"          # business name or rental property
+    kind: business                # business | rental
+    # ownership_pct: 50           # optional (default 100). For co-owned rental
+    #                             # assets, the tool figures are the FULL-property
+    #                             # amount; your deductible is this share of them.
+    method_note: "Diminishing value (DV), 100% taxable use"
+    assets:
+      - description: "Laptop"
+        cost: 2000.00
+        acquired: "2024-07-01"
+        method: DV                # DV (diminishing value) | PC (prime cost)
+        effective_life: 4         # years
+        taxable_use_pct: 100
+        # One row per financial year (fy = year the FY ends; 2025 = FY 2024-25).
+        years:
+          - { fy: 2025, opening: 2000.00, decline: 500.00, deductible: 500.00, closing: 1500.00 }
+          - { fy: 2026, opening: 1500.00, decline: 375.00, deductible: 375.00, closing: 1125.00 }

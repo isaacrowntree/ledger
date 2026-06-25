@@ -435,6 +435,15 @@ td.lodge-val { text-align: right; }
   border-color: var(--green);
 }
 
+/* Depreciation Tab */
+.depr-table td:first-child,
+.depr-table th:first-child {
+  width: 32%;
+  min-width: 12rem;
+}
+.depr-table td { white-space: nowrap; }
+.depr-table td:first-child { white-space: normal; }
+
 /* Spreadsheet Tab */
 .ss-tabs {
   display: flex;

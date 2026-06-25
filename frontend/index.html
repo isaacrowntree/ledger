@@ -20,6 +20,7 @@
         <button class="tab" data-tab="recurring">Recurring</button>
         <button class="tab" data-tab="tax">ATO Tax</button>
         <button class="tab" data-tab="lodgement">Lodgement</button>
+        <button class="tab" data-tab="depreciation">Depreciation</button>
         <button class="tab" data-tab="economics">Economics</button>
       </nav>
     </header>
@@ -172,6 +173,14 @@
           <span class="tax-hint">Click any value to copy it for myTax.</span>
         </div>
         <div id="lodgement-content"></div>
+      </section>
+
+      <section id="depreciation" class="view">
+        <div class="filters-bar">
+          <select id="depreciation-fy"></select>
+          <span class="tax-hint">Highlighted column = selected FY. Click a value to copy.</span>
+        </div>
+        <div id="depreciation-content"></div>
       </section>
 
       <section id="economics" class="view">

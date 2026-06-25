@@ -1,0 +1,35 @@
+registers:
+  - owner: "Test Business"
+    kind: business
+    method_note: "Diminishing value (DV)"
+    assets:
+      - description: "Camera"
+        cost: 2000.00
+        acquired: "2024-05-30"
+        method: DV
+        effective_life: 5
+        taxable_use_pct: 100
+        years:
+          - { fy: 2024, opening: 2000.00, decline: 100.00, deductible: 100.00, closing: 1900.00 }
+          - { fy: 2025, opening: 1900.00, decline: 760.00, deductible: 760.00, closing: 1140.00 }
+      - description: "Laptop"
+        cost: 1500.00
+        acquired: "2024-11-17"
+        method: DV
+        effective_life: 4
+        taxable_use_pct: 100
+        years:
+          - { fy: 2025, opening: 1500.00, decline: 250.00, deductible: 250.00, closing: 1250.00 }
+
+  - owner: "Test Rental"
+    kind: rental
+    ownership_pct: 50
+    assets:
+      - description: "Storage Cage"
+        cost: 2000.00
+        acquired: "2024-04-09"
+        method: DV
+        effective_life: 20
+        taxable_use_pct: 100
+        years:
+          - { fy: 2025, opening: 2000.00, decline: 200.00, deductible: 200.00, closing: 1800.00 }

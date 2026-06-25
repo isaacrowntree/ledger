@@ -1,4 +1,4 @@
-import { api, type Transaction, type Category, type AccountSummary, type Holding, type TaxSummary, type ATOReturn, type ATOLodgedResponse, type ATOTaxpayer, type ATOLabelRow, type SharedExpenseItem, type SharedExpensesResponse, type EconomicsSummary } from "./api";
+import { api, type Transaction, type Category, type AccountSummary, type Holding, type TaxSummary, type ATOReturn, type ATOLodgedResponse, type ATOTaxpayer, type ATOLabelRow, type DepreciationResponse, type SharedExpenseItem, type SharedExpensesResponse, type EconomicsSummary } from "./api";
 import { renderMonthlyChart, renderCategoryChart, renderTrendsChart, renderTaxBreakdownChart, renderCpiHistoryChart } from "./charts";
 import { populateFilters, getTransactionFilters } from "./filters";
 import { initSpreadsheet, loadSpreadsheet } from "./spreadsheet";
@@ -10,7 +10,7 @@ let allCategories: Category[] = [];
 
 const VALID_VIEWS = new Set([
   "dashboard", "transactions", "budget", "trends", "year-review",
-  "financial-year", "shared-expenses", "recurring", "tax", "lodgement", "economics",
+  "financial-year", "shared-expenses", "recurring", "tax", "lodgement", "depreciation", "economics",
 ]);
 
 function activateTab(viewId: string) {
@@ -59,6 +59,8 @@ async function loadView(view: string) {
       return loadTax();
     case "lodgement":
       return loadLodgement();
+    case "depreciation":
+      return loadDepreciation();
     case "economics":
       return loadEconomics();
   }
@@ -624,6 +626,136 @@ document.getElementById("lodgement-taxpayer")?.addEventListener("change", () => 
 
 document.getElementById("lodgement-fy")?.addEventListener("change", () => {
   renderLodgement();
+});
+
+// --- Depreciation Tab (asset register / WDV roll-forward) ---
+
+let depreciationData: DepreciationResponse | null = null;
+
+async function loadDepreciation() {
+  if (!depreciationData) {
+    depreciationData = await api.depreciation();
+    // FY selector = the union of every FY any asset has a row for, newest first.
+    const sel = document.getElementById("depreciation-fy") as HTMLSelectElement | null;
+    if (sel && sel.options.length === 0) {
+      const fys = new Set<number>();
+      for (const reg of depreciationData.registers)
+        for (const k of Object.keys(reg.totals)) fys.add(Number(k));
+      const sorted = [...fys].sort((a, b) => b - a);
+      for (const fy of sorted) {
+        const opt = document.createElement("option");
+        opt.value = String(fy);
+        opt.textContent = `FY ${fy - 1}-${String(fy).slice(2)}`;
+        sel.appendChild(opt);
+      }
+      // Default to most recent complete FY (matches the Lodgement default).
+      const now = new Date();
+      const currentFY = now.getMonth() >= 6 ? now.getFullYear() + 1 : now.getFullYear();
+      if (sorted.includes(currentFY - 1)) sel.value = String(currentFY - 1);
+    }
+  }
+  renderDepreciation();
+}
+
+function renderDepreciation() {
+  const el = document.getElementById("depreciation-content")!;
+  const data = depreciationData;
+  if (!data || !data.registers.length) {
+    el.innerHTML = `<p class="tax-hint">No depreciation register on file. Add assets to
+      <code>config/depreciation.yaml</code> (see the <code>.example</code> template).</p>`;
+    return;
+  }
+
+  const sel = document.getElementById("depreciation-fy") as HTMLSelectElement | null;
+  const fy = sel?.value ? Number(sel.value) : Math.max(...Object.keys(data.fy_totals).map(Number));
+
+  el.innerHTML = data.registers.map((reg) => {
+    const t = reg.totals[String(fy)];
+    const coOwned = reg.ownership_pct < 100;
+    const share = reg.ownership_pct / 100;
+    const fyLabel = `FY ${fy - 1}-${String(fy).slice(2)}`;
+    const shareCol = coOwned ? `<th>Your ${reg.ownership_pct}%</th>` : "";
+    const cols = coOwned ? 7 : 6;
+
+    // One row per asset: its opening → decline → (your share) → closing for the FY.
+    const assetRows = reg.assets.map((a) => {
+      const y = a.years.find((yr) => yr.fy === fy);
+      if (!y) {
+        return `<tr>
+          <td>${escapeHtml(a.description)}</td>
+          <td class="tax-hint" colspan="${cols - 1}">not held in this FY (acquired ${escapeHtml(a.acquired)})</td>
+        </tr>`;
+      }
+      const shareCell = coOwned
+        ? `<td class="lodge-val"><button class="lodge-copy" data-copy="${Math.round(y.deductible * share)}" title="Copy ${Math.round(y.deductible * share)}">$${fmt(y.deductible * share)}</button></td>`
+        : "";
+      const fullDeductible = coOwned
+        ? `<td>$${fmt(y.deductible)}</td>`
+        : `<td class="lodge-val"><button class="lodge-copy" data-copy="${Math.round(y.deductible)}" title="Copy ${Math.round(y.deductible)}">$${fmt(y.deductible)}</button></td>`;
+      return `<tr>
+        <td>${escapeHtml(a.description)}</td>
+        <td>$${fmt(y.opening)}</td>
+        <td class="negative">-$${fmt(y.decline)}</td>
+        ${fullDeductible}
+        ${shareCell}
+        <td>$${fmt(y.closing)}</td>
+        <td class="tax-hint">${escapeHtml(a.acquired)} · ${a.effective_life}y · ${escapeHtml(a.method)}</td>
+      </tr>`;
+    }).join("");
+
+    // What goes on the return: the taxpayer's share when co-owned, else the full amount.
+    const claimable = t ? (coOwned ? t.taxpayer_deductible : t.deductible) : 0;
+
+    return `
+      <div class="tax-header">
+        <h2>${escapeHtml(reg.owner)}</h2>
+        <span class="tax-dates">${escapeHtml(reg.kind)}${coOwned ? ` · ${reg.ownership_pct}% owned` : ""}${reg.method_note ? " · " + escapeHtml(reg.method_note) : ""}</span>
+      </div>
+      <div class="tax-cards">
+        <div class="card expense">
+          <div class="card-label">${coOwned ? `Your ${reg.ownership_pct}% deductible` : "Deductible decline"} · ${fyLabel}</div>
+          <div class="card-value">
+            <button class="lodge-copy" data-copy="${Math.round(claimable)}">$${fmt(claimable)}</button>
+          </div>
+          ${coOwned ? `<div class="card-label">full-property: $${fmt(t ? t.deductible : 0)}</div>` : ""}
+        </div>
+        <div class="card">
+          <div class="card-label">Assets held</div>
+          <div class="card-value">${t ? t.n_assets : 0}</div>
+        </div>
+      </div>
+      <div class="tax-section">
+        <table class="tax-table depr-table">
+          <thead><tr>
+            <th>Asset</th><th>Opening WDV</th><th>Decline</th><th>Deductible</th>${shareCol}<th>Closing WDV</th><th>Detail</th>
+          </tr></thead>
+          <tbody>${assetRows}</tbody>
+          <tfoot><tr class="tax-total">
+            <td>Total</td><td></td><td></td>
+            <td${coOwned ? "" : ' class="lodge-val"'}>${coOwned ? `$${fmt(t ? t.deductible : 0)}` : `<button class="lodge-copy" data-copy="${t ? Math.round(t.deductible) : 0}">$${fmt(t ? t.deductible : 0)}</button>`}</td>
+            ${coOwned ? `<td class="lodge-val"><button class="lodge-copy" data-copy="${Math.round(claimable)}">$${fmt(claimable)}</button></td>` : ""}
+            <td></td><td></td>
+          </tr></tfoot>
+        </table>
+      </div>`;
+  }).join("");
+}
+
+// Delegated click-to-copy (same behaviour as the Lodgement tab).
+document.getElementById("depreciation-content")?.addEventListener("click", async (e) => {
+  const btn = (e.target as HTMLElement).closest(".lodge-copy") as HTMLButtonElement | null;
+  if (!btn) return;
+  try {
+    await navigator.clipboard.writeText(btn.dataset.copy || "");
+    const prev = btn.textContent;
+    btn.classList.add("copied");
+    btn.textContent = "✓ copied";
+    setTimeout(() => { btn.textContent = prev; btn.classList.remove("copied"); }, 900);
+  } catch { /* clipboard unavailable */ }
+});
+
+document.getElementById("depreciation-fy")?.addEventListener("change", () => {
+  renderDepreciation();
 });
 
 // --- Year Review Tab ---

@@ -12,6 +12,7 @@ from etl.splitter import load_tax_config
 from etl import rental as rental_calc
 from etl import schedules as sched_calc
 from etl import ato_returns as ato_archive
+from etl import depreciation as depreciation_calc
 
 PROJECT_ROOT = Path(__file__).parent.parent
 FRONTEND_DIST = PROJECT_ROOT / "frontend" / "dist"
@@ -19,6 +20,7 @@ CONFIG_DIR = PROJECT_ROOT / "config"
 TAX_CONFIG_PATH = CONFIG_DIR / "tax.yaml"
 SCHEDULES_CONFIG_PATH = CONFIG_DIR / "schedules.yaml"
 ATO_RETURNS_CONFIG_PATH = CONFIG_DIR / "ato_returns.yaml"
+DEPRECIATION_CONFIG_PATH = CONFIG_DIR / "depreciation.yaml"
 
 app = Flask(__name__, static_folder=str(FRONTEND_DIST), static_url_path="")
 CORS(app)
@@ -1127,6 +1129,16 @@ def api_ato_lodged():
     carry-forward balances that apply to their next return.
     """
     return jsonify(ato_archive.load_ato_returns(ATO_RETURNS_CONFIG_PATH))
+
+
+@app.route("/api/depreciation")
+def api_depreciation():
+    """Depreciation asset register (from config/depreciation.yaml).
+
+    Per-asset capital-allowances schedules with written-down value carried forward
+    year to year, plus per-FY deductible-decline totals for copy into the return.
+    """
+    return jsonify(depreciation_calc.load_depreciation(DEPRECIATION_CONFIG_PATH))
 
 
 # --- Economics / CPI Endpoints ---
