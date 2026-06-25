@@ -436,6 +436,7 @@ td.lodge-val { text-align: right; }
 }
 
 /* Depreciation Tab */
+.depr-scroll { overflow-x: auto; }
 .depr-table td:first-child,
 .depr-table th:first-child {
   width: 32%;

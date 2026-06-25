@@ -28,6 +28,8 @@ def load_depreciation(config_path: Path) -> dict:
         return {"registers": [], "fy_totals": {}}
     with open(config_path) as f:
         data = yaml.safe_load(f) or {}
+    if not isinstance(data, dict):
+        return {"registers": [], "fy_totals": {}}
 
     registers = data.get("registers", []) or []
     fy_totals: dict[int, dict] = {}
@@ -35,13 +37,16 @@ def load_depreciation(config_path: Path) -> dict:
     for reg in registers:
         # Rental assets are often co-owned; the tool figures are the full-property
         # amount, so the taxpayer only deducts their ownership share.
-        pct = reg.get("ownership_pct", 100)
+        pct = reg.get("ownership_pct")
+        pct = 100 if pct is None else pct  # absent OR explicit null → full ownership
         reg["ownership_pct"] = pct
         share = pct / 100.0
         totals: dict[int, dict] = {}
         for asset in reg.get("assets", []) or []:
             for yr in asset.get("years", []) or []:
-                fy = yr["fy"]
+                fy = yr.get("fy")
+                if fy is None:  # tolerate a malformed/partial year row
+                    continue
                 ded = yr.get("deductible", 0.0)
                 t = totals.setdefault(fy, {"decline": 0.0, "deductible": 0.0, "taxpayer_deductible": 0.0, "n_assets": 0})
                 t["decline"] += yr.get("decline", 0.0)

@@ -511,10 +511,10 @@ function syncLodgementFYOptions() {
   }
 }
 
+// What gets written to the clipboard for a label value: a plain number string
+// (no $, no commas) or the raw string for Y/N style answers.
 function copyValue(v: number | string): string {
-  // What gets written to the clipboard: plain number (no $, no commas) or the
-  // raw string for Y/N style answers.
-  return typeof v === "number" ? String(v) : String(v);
+  return String(v);
 }
 
 function displayValue(v: number | string): string {
@@ -522,17 +522,54 @@ function displayValue(v: number | string): string {
   return `${v < 0 ? "-" : ""}$${fmt(Math.abs(v))}`;
 }
 
+// A click-to-copy button. `copy` is the exact clipboard text; `display` the
+// already-escaped/formatted visible HTML.
+function copyButton(copy: string, display: string, extraClass = ""): string {
+  const esc = escapeHtml(copy);
+  return `<button class="lodge-copy ${extraClass}" data-copy="${esc}" title="Copy ${esc}">${display}</button>`;
+}
+
+// "FY 2024-25" from the FY-ending year (2025).
+function fyLabel(fy: number): string {
+  return `FY ${fy - 1}-${String(fy).slice(2)}`;
+}
+
+// Delegated click-to-copy for any `.lodge-copy` button inside a container.
+// On success the button flashes "✓ copied"; on failure (insecure context /
+// denied permission) it flashes "⚠ copy failed" so the click isn't silent.
+function attachCopyHandler(containerId: string) {
+  document.getElementById(containerId)?.addEventListener("click", async (e) => {
+    const btn = (e.target as HTMLElement).closest(".lodge-copy") as HTMLButtonElement | null;
+    if (!btn) return;
+    const prev = btn.textContent;
+    const flash = (msg: string) => {
+      btn.classList.add("copied");
+      btn.textContent = msg;
+      setTimeout(() => { btn.textContent = prev; btn.classList.remove("copied"); }, 900);
+    };
+    try {
+      await navigator.clipboard.writeText(btn.dataset.copy || "");
+      flash("✓ copied");
+    } catch {
+      flash("⚠ copy failed");
+    }
+  });
+}
+
 function labelRowsHtml(rows: ATOLabelRow[]): string {
-  return rows.map((r) => `
+  return rows.map((r) => {
+    // Section rows carry `code`; carry-forward rows carry `label` — accept either.
+    const code = r.code ?? r.label ?? "";
+    const neg = typeof r.value === "number" && r.value < 0;
+    return `
     <tr>
-      <td class="lodge-code">${escapeHtml(r.code)}</td>
+      <td class="lodge-code">${escapeHtml(code)}</td>
       <td>${escapeHtml(r.desc)}</td>
-      <td class="lodge-val ${typeof r.value === "number" && r.value < 0 ? "negative" : ""}">
-        <button class="lodge-copy" data-copy="${escapeHtml(copyValue(r.value))}"
-                title="Copy ${escapeHtml(copyValue(r.value))}">${displayValue(r.value)}</button>
+      <td class="lodge-val ${neg ? "negative" : ""}">
+        ${copyButton(copyValue(r.value), displayValue(r.value))}
       </td>
-    </tr>
-  `).join("");
+    </tr>`;
+  }).join("");
 }
 
 function renderLodgement() {
@@ -604,20 +641,7 @@ function renderLodgement() {
   `;
 }
 
-// Delegated click-to-copy for any lodgement value.
-document.getElementById("lodgement-content")?.addEventListener("click", async (e) => {
-  const btn = (e.target as HTMLElement).closest(".lodge-copy") as HTMLButtonElement | null;
-  if (!btn) return;
-  try {
-    await navigator.clipboard.writeText(btn.dataset.copy || "");
-    const prev = btn.textContent;
-    btn.classList.add("copied");
-    btn.textContent = "✓ copied";
-    setTimeout(() => { btn.textContent = prev; btn.classList.remove("copied"); }, 900);
-  } catch {
-    /* clipboard unavailable (insecure context) — no-op */
-  }
-});
+attachCopyHandler("lodgement-content");
 
 document.getElementById("lodgement-taxpayer")?.addEventListener("change", () => {
   syncLodgementFYOptions();
@@ -645,7 +669,7 @@ async function loadDepreciation() {
       for (const fy of sorted) {
         const opt = document.createElement("option");
         opt.value = String(fy);
-        opt.textContent = `FY ${fy - 1}-${String(fy).slice(2)}`;
+        opt.textContent = fyLabel(fy);
         sel.appendChild(opt);
       }
       // Default to most recent complete FY (matches the Lodgement default).
@@ -657,10 +681,16 @@ async function loadDepreciation() {
   renderDepreciation();
 }
 
+// Copy cells carry the exact 2-decimal figure (matching the displayed cents and
+// the Lodgement tab), so a column of copies sums to the printed total.
+function deprMoney(n: number): string {
+  return copyButton(n.toFixed(2), `$${fmt(n)}`);
+}
+
 function renderDepreciation() {
   const el = document.getElementById("depreciation-content")!;
   const data = depreciationData;
-  if (!data || !data.registers.length) {
+  if (!data || !data.registers.length || !Object.keys(data.fy_totals).length) {
     el.innerHTML = `<p class="tax-hint">No depreciation register on file. Add assets to
       <code>config/depreciation.yaml</code> (see the <code>.example</code> template).</p>`;
     return;
@@ -673,7 +703,6 @@ function renderDepreciation() {
     const t = reg.totals[String(fy)];
     const coOwned = reg.ownership_pct < 100;
     const share = reg.ownership_pct / 100;
-    const fyLabel = `FY ${fy - 1}-${String(fy).slice(2)}`;
     const shareCol = coOwned ? `<th>Your ${reg.ownership_pct}%</th>` : "";
     const cols = coOwned ? 7 : 6;
 
@@ -686,12 +715,10 @@ function renderDepreciation() {
           <td class="tax-hint" colspan="${cols - 1}">not held in this FY (acquired ${escapeHtml(a.acquired)})</td>
         </tr>`;
       }
-      const shareCell = coOwned
-        ? `<td class="lodge-val"><button class="lodge-copy" data-copy="${Math.round(y.deductible * share)}" title="Copy ${Math.round(y.deductible * share)}">$${fmt(y.deductible * share)}</button></td>`
-        : "";
+      const shareCell = coOwned ? `<td class="lodge-val">${deprMoney(y.deductible * share)}</td>` : "";
       const fullDeductible = coOwned
         ? `<td>$${fmt(y.deductible)}</td>`
-        : `<td class="lodge-val"><button class="lodge-copy" data-copy="${Math.round(y.deductible)}" title="Copy ${Math.round(y.deductible)}">$${fmt(y.deductible)}</button></td>`;
+        : `<td class="lodge-val">${deprMoney(y.deductible)}</td>`;
       return `<tr>
         <td>${escapeHtml(a.description)}</td>
         <td>$${fmt(y.opening)}</td>
@@ -705,6 +732,7 @@ function renderDepreciation() {
 
     // What goes on the return: the taxpayer's share when co-owned, else the full amount.
     const claimable = t ? (coOwned ? t.taxpayer_deductible : t.deductible) : 0;
+    const fullTotal = t ? t.deductible : 0;
 
     return `
       <div class="tax-header">
@@ -713,11 +741,9 @@ function renderDepreciation() {
       </div>
       <div class="tax-cards">
         <div class="card expense">
-          <div class="card-label">${coOwned ? `Your ${reg.ownership_pct}% deductible` : "Deductible decline"} · ${fyLabel}</div>
-          <div class="card-value">
-            <button class="lodge-copy" data-copy="${Math.round(claimable)}">$${fmt(claimable)}</button>
-          </div>
-          ${coOwned ? `<div class="card-label">full-property: $${fmt(t ? t.deductible : 0)}</div>` : ""}
+          <div class="card-label">${coOwned ? `Your ${reg.ownership_pct}% deductible` : "Deductible decline"} · ${fyLabel(fy)}</div>
+          <div class="card-value">${deprMoney(claimable)}</div>
+          ${coOwned ? `<div class="card-label">full-property: $${fmt(fullTotal)}</div>` : ""}
         </div>
         <div class="card">
           <div class="card-label">Assets held</div>
@@ -725,6 +751,7 @@ function renderDepreciation() {
         </div>
       </div>
       <div class="tax-section">
+        <div class="depr-scroll">
         <table class="tax-table depr-table">
           <thead><tr>
             <th>Asset</th><th>Opening WDV</th><th>Decline</th><th>Deductible</th>${shareCol}<th>Closing WDV</th><th>Detail</th>
@@ -732,27 +759,17 @@ function renderDepreciation() {
           <tbody>${assetRows}</tbody>
           <tfoot><tr class="tax-total">
             <td>Total</td><td></td><td></td>
-            <td${coOwned ? "" : ' class="lodge-val"'}>${coOwned ? `$${fmt(t ? t.deductible : 0)}` : `<button class="lodge-copy" data-copy="${t ? Math.round(t.deductible) : 0}">$${fmt(t ? t.deductible : 0)}</button>`}</td>
-            ${coOwned ? `<td class="lodge-val"><button class="lodge-copy" data-copy="${Math.round(claimable)}">$${fmt(claimable)}</button></td>` : ""}
+            <td${coOwned ? "" : ' class="lodge-val"'}>${coOwned ? `$${fmt(fullTotal)}` : deprMoney(fullTotal)}</td>
+            ${coOwned ? `<td class="lodge-val">${deprMoney(claimable)}</td>` : ""}
             <td></td><td></td>
           </tr></tfoot>
         </table>
+        </div>
       </div>`;
   }).join("");
 }
 
-// Delegated click-to-copy (same behaviour as the Lodgement tab).
-document.getElementById("depreciation-content")?.addEventListener("click", async (e) => {
-  const btn = (e.target as HTMLElement).closest(".lodge-copy") as HTMLButtonElement | null;
-  if (!btn) return;
-  try {
-    await navigator.clipboard.writeText(btn.dataset.copy || "");
-    const prev = btn.textContent;
-    btn.classList.add("copied");
-    btn.textContent = "✓ copied";
-    setTimeout(() => { btn.textContent = prev; btn.classList.remove("copied"); }, 900);
-  } catch { /* clipboard unavailable */ }
-});
+attachCopyHandler("depreciation-content");
 
 document.getElementById("depreciation-fy")?.addEventListener("change", () => {
   renderDepreciation();
@@ -1504,8 +1521,10 @@ async function loadTrends() {
 
 function escapeHtml(s: string): string {
   const div = document.createElement("div");
-  div.textContent = s;
-  return div.innerHTML;
+  div.textContent = s ?? "";
+  // innerHTML escapes &<> but not quotes; escape them too so values are safe
+  // inside double/single-quoted attributes (data-copy, title).
+  return div.innerHTML.replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }
 
 // --- Filter event listeners ---

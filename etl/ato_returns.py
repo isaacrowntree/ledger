@@ -43,7 +43,8 @@ def _normalise_taxpayer(tp: dict, index: int) -> dict:
     ref = tp.get("reference", {}) or {}
     lodged = list(tp.get("lodged", []) or [])
     # Most-recent-first so the UI and carry-forward logic are order-independent.
-    lodged.sort(key=lambda y: y.get("fy", 0), reverse=True)
+    # `or 0` also coerces an explicit null fy (hand-edited YAML) so sort can't throw.
+    lodged.sort(key=lambda y: y.get("fy") or 0, reverse=True)
     tp_id = tp.get("id") or _slug(ref.get("name")) or f"taxpayer-{index + 1}"
     return {
         "id": tp_id,
@@ -64,6 +65,8 @@ def load_ato_returns(config_path: Path) -> dict:
         return {"taxpayers": []}
     with open(config_path) as f:
         data = yaml.safe_load(f) or {}
+    if not isinstance(data, dict):
+        return {"taxpayers": []}
 
     raw = data.get("taxpayers")
     if raw is None:
