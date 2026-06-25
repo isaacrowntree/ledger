@@ -1,6 +1,8 @@
 """Tests for the depreciation asset register loader (etl.depreciation)."""
 from pathlib import Path
 
+import pytest
+
 from etl.depreciation import load_depreciation
 
 FIXTURE = Path(__file__).parent / "fixtures" / "depreciation.yaml"
@@ -37,20 +39,26 @@ def test_business_register_full_deduction_when_100pct():
     assert reg["totals"][2025]["taxpayer_deductible"] == 1010.00
 
 
-def test_rental_register_applies_ownership_share():
+def test_rental_register_keeps_decline_deductible_and_share_distinct():
     reg = _rental(load_depreciation(FIXTURE))
     assert reg["ownership_pct"] == 50
-    # Full-property decline 200; 50% owner deducts 100.
-    assert reg["totals"][2025]["deductible"] == 200.00
-    assert reg["totals"][2025]["taxpayer_deductible"] == 100.00
+    t = reg["totals"][2025]
+    # Fixture has decline=400, deductible=300 → these must NOT be conflated, and
+    # the taxpayer share is deductible*0.5 (150), NOT decline*0.5 (200).
+    assert t["decline"] == 400.00
+    assert t["deductible"] == 300.00
+    assert t["taxpayer_deductible"] == 150.00
 
 
 def test_fy_totals_across_all_registers():
     data = load_depreciation(FIXTURE)
-    # full: business 1010 + rental 200 = 1210
-    assert data["fy_totals"][2025]["deductible"] == 1210.00
-    # taxpayer: business 1010 + rental 100 = 1110
-    assert data["fy_totals"][2025]["taxpayer_deductible"] == 1110.00
+    fy = data["fy_totals"][2025]
+    # decline: business 1010 + rental 400 = 1410
+    assert fy["decline"] == 1410.00
+    # full deductible: business 1010 + rental 300 = 1310
+    assert fy["deductible"] == 1310.00
+    # taxpayer deductible: business 1010 + rental 150 = 1160
+    assert fy["taxpayer_deductible"] == 1160.00
 
 
 def test_totals_keys_sorted():
@@ -61,3 +69,36 @@ def test_totals_keys_sorted():
 def test_missing_file_yields_empty():
     data = load_depreciation(Path("/nonexistent/depreciation.yaml"))
     assert data == {"registers": [], "fy_totals": {}}
+
+
+# --- Robustness against hand-edited YAML ---
+
+def test_null_ownership_pct_defaults_to_full(tmp_path):
+    p = tmp_path / "d.yaml"
+    p.write_text(
+        "registers:\n  - owner: X\n    kind: business\n    ownership_pct:\n"
+        "    assets:\n      - description: A\n        years:\n"
+        "          - { fy: 2025, decline: 100, deductible: 100, closing: 0 }\n"
+    )
+    reg = load_depreciation(p)["registers"][0]
+    assert reg["ownership_pct"] == 100
+    assert reg["totals"][2025]["taxpayer_deductible"] == 100.00
+
+
+def test_year_row_missing_fy_is_skipped_not_fatal(tmp_path):
+    p = tmp_path / "d.yaml"
+    p.write_text(
+        "registers:\n  - owner: X\n    kind: business\n    assets:\n"
+        "      - description: A\n        years:\n"
+        "          - { decline: 50, deductible: 50 }\n"
+        "          - { fy: 2025, decline: 100, deductible: 100, closing: 0 }\n"
+    )
+    reg = load_depreciation(p)["registers"][0]
+    assert list(reg["totals"].keys()) == [2025]
+    assert reg["totals"][2025]["deductible"] == 100.00
+
+
+def test_non_dict_top_level_yields_empty(tmp_path):
+    p = tmp_path / "d.yaml"
+    p.write_text("- just\n- a\n- list\n")
+    assert load_depreciation(p) == {"registers": [], "fy_totals": {}}

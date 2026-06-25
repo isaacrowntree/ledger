@@ -200,7 +200,8 @@ export interface WorkTripsResponse {
 }
 
 export interface ATOLabelRow {
-  code: string;
+  code?: string;   // section rows use `code`...
+  label?: string;  // ...carry-forward rows use `label`
   desc: string;
   value: number | string;
 }

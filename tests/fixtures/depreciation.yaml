@@ -32,4 +32,6 @@ registers:
         effective_life: 20
         taxable_use_pct: 100
         years:
-          - { fy: 2025, opening: 2000.00, decline: 200.00, deductible: 200.00, closing: 1800.00 }
+          # decline != deductible here so the suite can tell `deductible` and
+          # `decline` apart (partial taxable use): full decline 400, deductible 300.
+          - { fy: 2025, opening: 2000.00, decline: 400.00, deductible: 300.00, closing: 1600.00 }

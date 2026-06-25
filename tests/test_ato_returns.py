@@ -69,3 +69,27 @@ def test_multi_taxpayers_keep_separate_reference():
 def test_missing_file_yields_empty_archive(tmp_path):
     data = load_ato_returns(tmp_path / "nope.yaml")
     assert data == {"taxpayers": []}
+
+
+def test_taxpayer_id_fallback_when_no_id_or_name(tmp_path):
+    p = tmp_path / "a.yaml"
+    p.write_text("taxpayers:\n  - lodged: []\n")
+    tp = load_ato_returns(p)["taxpayers"][0]
+    assert tp["id"] == "taxpayer-1"  # neither id nor reference.name present
+
+
+def test_null_fy_does_not_crash_sort(tmp_path):
+    p = tmp_path / "a.yaml"
+    p.write_text(
+        "taxpayers:\n  - id: x\n    lodged:\n"
+        "      - { fy: 2024, fy_label: 'FY 2023-24' }\n"
+        "      - { fy: , fy_label: 'blank' }\n"  # explicit null fy
+    )
+    tp = load_ato_returns(p)["taxpayers"][0]
+    assert tp["lodged"][0]["fy"] == 2024  # real year sorts ahead of the null one
+
+
+def test_non_dict_top_level_yields_empty(tmp_path):
+    p = tmp_path / "a.yaml"
+    p.write_text("- a\n- b\n")
+    assert load_ato_returns(p) == {"taxpayers": []}
