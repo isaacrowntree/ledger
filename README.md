@@ -57,6 +57,7 @@ python -m api
 | Bankwest | CSV export | `etl/parsers/bankwest_csv.py` |
 | HSBC | PDF statements | `etl/parsers/hsbc_pdf.py` |
 | Coles Mastercard | PDF statements | `etl/parsers/coles_pdf.py` |
+| Coles Mastercard | CSV export | `etl/parsers/coles_csv.py` |
 | Amex | CSV download | `etl/parsers/amex_csv.py` |
 | Airbnb | CSV payout report | `etl/parsers/airbnb_csv.py` |
 

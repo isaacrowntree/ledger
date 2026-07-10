@@ -12,6 +12,7 @@ from etl.parsers.airbnb_csv import AirbnbCSVParser
 from etl.parsers.amex_csv import AmexCSVParser
 from etl.parsers.bankwest_csv import BankwestCSVParser
 from etl.parsers.bankwest_pdf import BankwestPDFParser
+from etl.parsers.coles_csv import ColesCSVParser
 from etl.parsers.coles_pdf import ColesCreditPDFParser
 from etl.parsers.hsbc_pdf import HSBCPDFParser
 from etl.parsers.ing_csv import INGCSVParser
@@ -34,6 +35,7 @@ PARSERS = {
     "ing-csv": (INGCSVParser, "ing-csv", "*.csv"),
     "hsbc": (HSBCPDFParser, "hsbc", "*.pdf"),
     "coles": (ColesCreditPDFParser, "coles", "*.pdf"),
+    "coles-csv": (ColesCSVParser, "coles-csv", "*.csv"),
     "bankwest": (BankwestPDFParser, "bankwest", "*.pdf"),
     "bankwest-csv": (BankwestCSVParser, "bankwest-csv", "*.csv"),
     "amex": (AmexCSVParser, "amex", "*.csv"),
@@ -47,6 +49,7 @@ ACCOUNT_NAMES = {
     "airbnb": "Airbnb",
     "hsbc": "HSBC",
     "coles": "Coles Credit Card",
+    "coles-csv": "Coles Credit Card",
     "bankwest": "Bankwest",
     "bankwest-csv": "Bankwest",
     "amex": "Amex",
