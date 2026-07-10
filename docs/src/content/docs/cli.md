@@ -73,36 +73,6 @@ Output includes:
 - Depreciation items from config
 - Manual entries from config
 
-### `ledger connect`
-
-Connect bank accounts via the Basiq open banking API. Generates a consent URL to link your banks.
-
-```sh
-ledger connect
-```
-
-Requires a Basiq API key in your environment. After connecting, use `ledger sync` to pull transactions.
-
-### `ledger sync`
-
-Sync transactions from connected Basiq bank accounts.
-
-```sh
-# Sync all connected banks
-ledger sync
-
-# Sync only ING
-ledger sync --source ing
-
-# Sync transactions since a specific date
-ledger sync --since 2025-01-01
-
-# Preview without writing
-ledger sync --dry-run
-```
-
-Automatically detects the last synced transaction date and only fetches new ones.
-
 ## Starting the API server
 
 The API server is not part of the `ledger` CLI -- it runs as a Python module:

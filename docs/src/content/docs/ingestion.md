@@ -1,15 +1,14 @@
 ---
 title: Ingestion methods
-description: Three ways to get bank statements into Ledger — Playwright MCP, manual download, or Basiq API.
+description: Two ways to get bank statements into Ledger — Playwright MCP or manual download.
 ---
 
-Ledger supports three ingestion paths. They all funnel into the same normalise / dedup / categorise / tag pipeline, so you can mix and match per bank.
+Ledger supports two ingestion paths. They both funnel into the same normalise / dedup / categorise / tag pipeline, so you can mix and match per bank.
 
 | Method | Setup cost | Reliability | Best for |
 |---|---|---|---|
 | [Playwright MCP](#1-playwright-mcp) | Author a skill once per bank | High once written | Banks you ingest from often |
 | [Manual download](#2-manual-download) | None | Always works | One-off catch-ups, banks without a skill |
-| [Basiq API](#3-basiq-api) | One-time consent flow | Flaky — connections expire | Quick sync when it happens to be working |
 
 ## 1. Playwright MCP
 
@@ -86,64 +85,9 @@ ledger ingest --dry-run
 
 Processed files are moved to `data/archive/` so re-running is safe.
 
-## 3. Basiq API
-
-[Basiq](https://basiq.io) is an Australian open-banking aggregator. One consent flow gives Ledger read-only access to ING, HSBC, Bankwest, and Coles.
-
-It's the fastest sync **when it works**. In practice, connections expire, MFA re-prompts on the bank side, and Basiq returns 5xx more often than you'd want. Treat it as opportunistic — if the next sync fails, fall back to Playwright or manual download instead of debugging.
-
-### One-time setup
-
-Add your API key to `.env`:
-
-```
-BASIQ_API_KEY=your-base64-encoded-api-key
-```
-
-Then run:
-
-```sh
-ledger connect
-```
-
-This prints a consent URL. Open it in a browser, link your bank accounts, then come back to the terminal. State is persisted to `data/basiq_state.json`.
-
-### Sync
-
-```sh
-ledger sync
-# scope to one source
-ledger sync --source ing
-# only fetch since a date
-ledger sync --since 2025-01-01
-# preview only
-ledger sync --dry-run
-```
-
-`since` is auto-detected from the most recent `basiq:%` transaction in the DB if you don't pass it.
-
-### Supported institutions
-
-Defined in `etl/basiq.py`:
-
-| Source | Basiq institution ID |
-|---|---|
-| ING | `AU00201` |
-| HSBC | `AU07201` |
-| Bankwest | `AU00401` |
-| Coles | `AU15301` |
-
-Other banks need Method 1 or 2.
-
-### Troubleshooting
-
-- **"No bank connections found"** — run `ledger connect`; consent may have expired.
-- **HTTP 401** — check `BASIQ_API_KEY`.
-- **Partial history** — some institutions return only ~90 days. Backfill earlier periods using Method 1 or 2.
-
 ## After ingestion
 
-All three methods feed the same pipeline:
+Both methods feed the same pipeline:
 
 1. **Dedup** — SHA-256 transaction hash.
 2. **Source-of-truth** — credit-card payments from your bank are auto-marked as transfers (see [Source of Truth](/docs/source-of-truth)).
