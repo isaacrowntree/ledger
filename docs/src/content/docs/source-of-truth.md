@@ -74,7 +74,6 @@ The hash is computed in `etl/normalizer.py` in `compute_dedup_hash()`:
 |--------|-----------|
 | PayPal | Transaction reference ID (unique per PayPal transaction) |
 | ING | `date|description|amount|source_file_stem` (includes filename to differentiate same-amount transfers between ING accounts) |
-| Basiq | Basiq transaction ID |
 | All others | `date|description|amount` |
 
 The `dedup_hash` column in the `transactions` table has a `UNIQUE` constraint. If a hash already exists, the transaction is silently skipped during ingest.

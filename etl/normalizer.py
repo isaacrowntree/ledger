@@ -48,9 +48,7 @@ def is_payment_to_source_of_truth(txn: RawTransaction, patterns: list[re.Pattern
 
 def compute_dedup_hash(txn: RawTransaction) -> str:
     """Compute a dedup hash based on source type."""
-    if txn.reference_id and txn.reference_id.startswith("basiq:"):
-        data = txn.reference_id
-    elif txn.source_type == "paypal" and txn.reference_id:
+    if txn.source_type == "paypal" and txn.reference_id:
         data = txn.reference_id
     elif txn.source_type == "ing":
         # Include source_file so same-amount transfers between ING accounts don't collide

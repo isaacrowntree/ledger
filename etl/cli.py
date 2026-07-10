@@ -17,7 +17,6 @@ from etl.parsers.hsbc_pdf import HSBCPDFParser
 from etl.parsers.ing_csv import INGCSVParser
 from etl.parsers.ing_pdf import INGPDFParser
 from etl.parsers.paypal_csv import PayPalCSVParser
-from etl import basiq
 from etl.splitter import load_tax_config, backfill_splits
 from etl.dedup import find_duplicates, resolve_duplicates
 from etl import rental
@@ -84,14 +83,6 @@ def main():
 
     sub.add_parser("init", help="Initialize database and load config")
 
-    sub.add_parser("connect", help="Connect bank accounts via Basiq")
-
-    sync_parser = sub.add_parser("sync", help="Sync transactions from connected banks via Basiq")
-    sync_parser.add_argument("--source", choices=list(basiq.INSTITUTION_IDS.keys()),
-                             help="Only sync from this source")
-    sync_parser.add_argument("--since", help="Only fetch transactions after this date (YYYY-MM-DD)")
-    sync_parser.add_argument("--dry-run", action="store_true", help="Preview without writing to DB")
-
     split_parser = sub.add_parser("split", help="Compute business splits for transactions")
     split_parser.add_argument("--backfill", action="store_true", help="Backfill splits for existing transactions")
     split_parser.add_argument("--fy", type=int, help="Financial year (e.g. 2025 for FY 2024-25)")
@@ -118,10 +109,6 @@ def main():
         cmd_init()
     elif args.command == "ingest":
         cmd_ingest(source=args.source, dry_run=args.dry_run)
-    elif args.command == "connect":
-        cmd_connect()
-    elif args.command == "sync":
-        cmd_sync(source=args.source, since=args.since, dry_run=args.dry_run)
     elif args.command == "split":
         cmd_split(backfill=args.backfill, fy=args.fy)
     elif args.command == "tax":
@@ -291,146 +278,6 @@ def cmd_tag(
     conn.commit()
     conn.close()
     print(f"\nApplied: tag={tag} category={category} clear_transfer={clear_transfer}")
-
-
-def cmd_connect():
-    """Connect bank accounts via Basiq consent flow."""
-    state = basiq.load_state()
-
-    # Create or reuse Basiq user
-    if "user_id" not in state:
-        print("Creating Basiq user...")
-        token = basiq.get_server_token()
-        user_id = basiq.create_user(token)
-        state["user_id"] = user_id
-        basiq.save_state(state)
-        print(f"Created user: {user_id}")
-    else:
-        user_id = state["user_id"]
-        print(f"Using existing user: {user_id}")
-
-    # Generate consent link
-    consent_url = basiq.get_consent_link(user_id)
-    print(f"\nOpen this link to connect your bank accounts:\n")
-    print(f"  {consent_url}\n")
-    print("Supported banks:")
-    for source, inst_id in basiq.INSTITUTION_IDS.items():
-        name = ACCOUNT_NAMES.get(source, source)
-        print(f"  - {name} ({inst_id})")
-
-    print("\nAfter connecting, run 'ledger sync' to pull transactions.")
-
-    # Check for existing connections
-    token = basiq.get_server_token()
-    connections = basiq.list_connections(token, user_id)
-    if connections:
-        print(f"\nExisting connections:")
-        conn_map = {}
-        for c in connections:
-            inst_id = c.get("institution", {}).get("id", "")
-            source = basiq.INSTITUTION_TO_SOURCE.get(inst_id, "unknown")
-            status = c.get("status", "unknown")
-            conn_map[source] = c["id"]
-            print(f"  - {source}: {status} (connection: {c['id']})")
-        state["connections"] = conn_map
-        basiq.save_state(state)
-
-
-def cmd_sync(source: str | None = None, since: str | None = None, dry_run: bool = False):
-    """Sync transactions from connected Basiq bank accounts."""
-    state = basiq.load_state()
-    user_id = state.get("user_id")
-    if not user_id:
-        print("No Basiq user found. Run 'ledger connect' first.")
-        sys.exit(1)
-
-    token = basiq.get_server_token()
-
-    # Discover connections
-    connections = basiq.list_connections(token, user_id)
-    if not connections:
-        print("No bank connections found. Run 'ledger connect' and link your accounts.")
-        sys.exit(1)
-
-    # Build connection map: source_type -> connection_id
-    conn_map = {}
-    for c in connections:
-        inst_id = c.get("institution", {}).get("id", "")
-        src = basiq.INSTITUTION_TO_SOURCE.get(inst_id)
-        if src:
-            conn_map[src] = c["id"]
-            print(f"Found connection: {ACCOUNT_NAMES.get(src, src)} ({c.get('status', 'unknown')})")
-
-    if source:
-        if source not in conn_map:
-            print(f"No connection found for '{source}'. Connected sources: {list(conn_map.keys())}")
-            sys.exit(1)
-        conn_map = {source: conn_map[source]}
-
-    if not conn_map:
-        print("No supported bank connections found.")
-        sys.exit(1)
-
-    # Auto-detect 'since' from last synced transaction if not provided
-    conn = db.get_connection()
-    db.init_db(conn)
-    db.load_categories_from_config(conn, CONFIG_DIR / "categories.yaml")
-    db.load_accounts_from_config(conn, CONFIG_DIR / "accounts.yaml")
-    categorizer = Categorizer(conn, CONFIG_DIR / "categories.yaml")
-
-    total_inserted = 0
-    total_skipped = 0
-
-    for src, connection_id in conn_map.items():
-        print(f"\nSyncing {ACCOUNT_NAMES.get(src, src)}...")
-
-        # Determine 'since' date: use provided, or find last transaction date
-        effective_since = since
-        if not effective_since:
-            row = conn.execute(
-                "SELECT MAX(date) as last_date FROM transactions WHERE source_type = ? AND reference_id LIKE 'basiq:%'",
-                (src,),
-            ).fetchone()
-            if row and row["last_date"]:
-                effective_since = row["last_date"]
-                print(f"  Fetching transactions since {effective_since}")
-            else:
-                print(f"  Fetching all available transactions")
-
-        # Fetch from Basiq
-        txns = basiq.fetch_transactions(token, user_id, connection_id, since=effective_since)
-        print(f"  Fetched {len(txns)} transactions from Basiq")
-
-        if not txns:
-            continue
-
-        # Convert to RawTransaction
-        raw_txns = basiq.basiq_to_raw_transactions(txns, src)
-        print(f"  {len(raw_txns)} posted transactions to process")
-
-        # Run through existing normalizer pipeline
-        account_name = ACCOUNT_NAMES[src]
-        account_id = db.ensure_account(conn, account_name, src)
-
-        inserted, skipped = normalize_and_insert(
-            conn, raw_txns, account_id, categorizer,
-            payment_patterns=load_payment_patterns(CONFIG_DIR / "accounts.yaml")[0],
-            dry_run=dry_run,
-        )
-        total_inserted += inserted
-        total_skipped += skipped
-        print(f"  Inserted: {inserted}, Skipped (duplicates): {skipped}")
-
-    conn.commit()
-    conn.close()
-
-    # Update last sync time
-    if not dry_run:
-        state["last_sync"] = __import__("datetime").datetime.now().isoformat()
-        state["connections"] = conn_map
-        basiq.save_state(state)
-
-    print(f"\nDone. Total inserted: {total_inserted}, Total skipped: {total_skipped}")
 
 
 def cmd_split(backfill: bool = False, fy: int | None = None):
