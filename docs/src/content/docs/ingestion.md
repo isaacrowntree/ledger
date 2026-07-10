@@ -68,6 +68,7 @@ Always works, no setup. The fallback when nothing else does.
 | Bankwest (CSV) | `staging/bankwest-csv/` | `*.csv` |
 | HSBC | `staging/hsbc/` | `*.pdf` |
 | Coles Mastercard | `staging/coles/` | `*.pdf` |
+| Coles Mastercard (CSV) | `staging/coles-csv/` | `*.csv` |
 | Amex | `staging/amex/` | `*.csv` |
 | Airbnb | `staging/airbnb/` | `*.csv` |
 
