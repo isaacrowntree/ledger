@@ -23,18 +23,31 @@ businesses:
 rental_properties: []
   # - name: "MY PROPERTY"
   #   address: "123 Main St, Suburb NSW 2000"
-  #   ownership_pct: 100
+  #   ownership_pct: 100           # your legal ownership interest in the title
+  #   floor_area_pct: 100          # rented portion (rent-a-room); 100 for whole-property
   #   rental_weeks: { 2025: 52 }
   #   income_category: "Airbnb Income"
+  #   # apply modes multiply the gross expense, in order:
+  #   #   ownership : × ownership_pct/100
+  #   #   area      : × floor_area_pct/100   (private-use apportionment)
+  #   #   time      : × rental_weeks/52       (part-year availability)
+  #   #   []        : 100% — NO apportionment
+  #   # CO-OWNERSHIP: on a property owned with someone else, EVERY expense is
+  #   # split by ownership interest — repairs included (TR 93/32). Use
+  #   # apply: [ownership] on every line; reserve [] for a solely-owned property.
   #   expense_mapping:
   #     - ato_label: "Body corporate fees"
   #       category: "Strata"
+  #       apply: [ownership]
   #     - ato_label: "Interest on loans"
   #       category: "Mortgage"
+  #       apply: [ownership, area]   # area only if rent-a-room / part of home
   #     - ato_label: "Water charges"
   #       tag: "water"
+  #       apply: [ownership]
   #     - ato_label: "Repairs and maintenance"
   #       category: "Rental: Maintenance"
+  #       apply: [ownership]         # still split by ownership even though rental-specific
 
 work_deductions:
   wfh:
