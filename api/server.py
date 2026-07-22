@@ -987,12 +987,13 @@ def api_ato_return():
               AND (c.name = 'Freelance Income' OR c.name = 'Other Income')
         """, (fy_start, fy_end)).fetchone()["total"]
 
-        # COGS & expenses from splits
+        # COGS & expenses from splits (exclude transfer legs — they aren't expenses)
         biz_expenses = conn.execute("""
             SELECT COALESCE(SUM(ts.business_amount), 0) as total
             FROM transaction_splits ts
             JOIN transactions t ON t.id = ts.transaction_id
             WHERE t.date >= ? AND t.date <= ? AND ts.business_name = ?
+              AND t.is_transfer = 0
         """, (fy_start, fy_end, biz_name)).fetchone()["total"]
 
         # Depreciation
@@ -1012,6 +1013,9 @@ def api_ato_return():
             "expenses": biz_expenses,
             "depreciation": dep_total,
             "net": round(net, 2),
+            # Div 35 non-commercial loss: when set, a net LOSS is deferred (carried
+            # forward at P9), NOT deducted against other income this year.
+            "defer_losses": bool(biz.get("defer_losses", False)),
         })
 
     # Work deductions
@@ -1057,18 +1061,28 @@ def api_ato_return():
     # --- Final tax summary ----------------------------------------------
     # Build the assessable income / total deductions / taxable income / payable view
     rental_net_total = sum(r["net_rent"] for r in rental_data)
-    business_net_total = sum(b["net"] for b in business_data)
     trips_total = sum(t["total"] for t in trip_deductions)
+
+    # Business: profits are always assessable; losses are a deduction UNLESS the
+    # business defers them (Div 35 non-commercial loss), in which case they are
+    # quarantined/carried forward (P9) and do NOT reduce this year's income.
+    business_profit = sum(b["net"] for b in business_data if b["net"] > 0)
+    business_deductible_loss = sum(
+        -b["net"] for b in business_data if b["net"] < 0 and not b["defer_losses"]
+    )
+    business_deferred_loss = round(sum(
+        -b["net"] for b in business_data if b["net"] < 0 and b["defer_losses"]
+    ), 2)
 
     assessable = (
         salary
         + interest
         + max(rental_net_total, 0)        # positive net rent adds to income
-        + max(business_net_total, 0)      # positive business profit adds to income
+        + business_profit                 # positive business profit adds to income
     )
     deductions_total = (
         abs(min(rental_net_total, 0))     # negative net rent (loss) is a deduction
-        + abs(min(business_net_total, 0))
+        + business_deductible_loss        # non-deferred business losses only
         + wfh_amount
         + trips_total
     )
@@ -1088,6 +1102,8 @@ def api_ato_return():
         "tax_withheld": tax_withheld,
         # positive = refund, negative = bill
         "refund_or_payable": refund_or_payable,
+        # Div 35 loss deferred this year (carried forward at P9, not deducted above)
+        "business_deferred_loss": business_deferred_loss,
     }
 
     conn.close()
