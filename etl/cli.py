@@ -18,6 +18,8 @@ from etl.parsers.hsbc_pdf import HSBCPDFParser
 from etl.parsers.ing_csv import INGCSVParser
 from etl.parsers.ing_pdf import INGPDFParser
 from etl.parsers.paypal_csv import PayPalCSVParser
+from etl.parsers.commsec_pdf import CommSecContractNoteParser
+from etl.cgt import match_disposals, summarise
 from etl.splitter import load_tax_config, backfill_splits
 from etl.dedup import find_duplicates, resolve_duplicates
 from etl import rental
@@ -93,6 +95,11 @@ def main():
     tax_parser = sub.add_parser("tax", help="Show ATO tax summary")
     tax_parser.add_argument("--fy", type=int, help="Financial year (e.g. 2025 for FY 2024-25)")
 
+    cgt_parser = sub.add_parser("cgt", help="Capital gains from CommSec contract notes in staging/commsec/")
+    cgt_parser.add_argument("--fy", type=int, required=True, help="Financial year (e.g. 2025 for FY 2024-25)")
+    cgt_parser.add_argument("--carried-forward-losses", type=float, default=0.0,
+                            help="Net capital losses carried forward from an earlier year (label 18V)")
+
     dedup_parser = sub.add_parser("dedup", help="Find and resolve cross-account duplicate transactions")
     dedup_parser.add_argument("--dry-run", action="store_true", help="Preview without writing to DB")
 
@@ -116,6 +123,8 @@ def main():
         cmd_split(backfill=args.backfill, fy=args.fy)
     elif args.command == "tax":
         cmd_tax(fy=args.fy)
+    elif args.command == "cgt":
+        cmd_cgt(fy=args.fy, carried_forward_losses=args.carried_forward_losses)
     elif args.command == "dedup":
         cmd_dedup(dry_run=args.dry_run)
     elif args.command == "tag":
@@ -201,6 +210,47 @@ def cmd_ingest(source: str | None = None, dry_run: bool = False):
     conn.close()
 
     print(f"\nDone. Total inserted: {total_inserted}, Total skipped: {total_skipped}")
+
+
+def cmd_cgt(fy: int, carried_forward_losses: float = 0.0):
+    """Report capital gains for a financial year from CommSec contract notes.
+
+    Notes are read in place rather than archived like statements: a parcel
+    bought years ago is still needed to cost a disposal today, so the whole
+    history has to stay available.
+    """
+    notes_dir = STAGING_DIR / "commsec"
+    files = sorted(notes_dir.glob("*.pdf")) + sorted(notes_dir.glob("*.PDF"))
+    if not files:
+        print(f"No contract notes found in {notes_dir}")
+        return
+
+    trades = CommSecContractNoteParser().parse_all(files)
+    events = match_disposals(trades)
+    summary = summarise(events, fy, carried_forward_losses)
+
+    print(f"\nCapital gains — FY {fy - 1}-{str(fy)[2:]}   ({len(trades)} contract notes)\n")
+    if not summary["events"]:
+        print("  No disposals in this financial year.")
+        return
+
+    print(f"  {'code':<6}{'units':>9}  {'acquired':<11}{'disposed':<11}"
+          f"{'cost base':>12}{'proceeds':>12}{'gain':>12}  discount")
+    for e in summary["events"]:
+        print(f"  {e.code:<6}{e.units:>9,.0f}  {e.acquired}  {e.disposed}"
+              f"{e.cost_base:>12,.2f}{e.proceeds:>12,.2f}{e.gain:>12,.2f}"
+              f"  {'yes' if e.discountable else 'no'}")
+
+    print()
+    for label, key in [
+        ("Gross capital gains", "gross_gains"),
+        ("Capital losses", "losses"),
+        ("Losses applied", "losses_applied"),
+        ("50% discount", "discount"),
+        ("Net capital gain", "net_capital_gain"),
+        ("Losses carried forward", "losses_carried_forward"),
+    ]:
+        print(f"  {label:<24}{summary[key]:>12,.2f}")
 
 
 def cmd_dedup(dry_run: bool = False):
