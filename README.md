@@ -53,7 +53,10 @@ python -m api
 | ING Australia | PDF statements | `etl/parsers/ing_pdf.py` |
 | ING Australia | CSV export | `etl/parsers/ing_csv.py` |
 | PayPal | CSV activity download | `etl/parsers/paypal_csv.py` |
-| Bankwest | PDF eStatements | `etl/parsers/bankwest_pdf.py` |
+| CBA transaction account | PDF statements | `etl/parsers/cba_pdf.py` |
+| CBA credit card | PDF statements | `etl/parsers/cba_cc_pdf.py` |
+| Bankwest credit card | PDF eStatements | `etl/parsers/bankwest_pdf.py` |
+| Bankwest home loan / offset | PDF statements | `etl/parsers/bankwest_account_pdf.py` |
 | Bankwest | CSV export | `etl/parsers/bankwest_csv.py` |
 | HSBC | PDF statements | `etl/parsers/hsbc_pdf.py` |
 | Coles Mastercard | PDF statements | `etl/parsers/coles_pdf.py` |
@@ -62,6 +65,24 @@ python -m api
 | Airbnb | CSV payout report | `etl/parsers/airbnb_csv.py` |
 
 Adding a new bank: implement `BaseParser` in `etl/parsers/`, add to `PARSERS` in `etl/cli.py`.
+
+### Column-based PDF statements
+
+CBA and Bankwest print debits and credits in separate columns as bare positive
+numbers, so flattening a page to text loses the only thing that tells a $10 fee
+from a $10 deposit. Those parsers use `etl/parsers/pdf_layout.py`, which keeps
+each word's horizontal position and recovers the column from its right edge.
+They also refuse to import a statement that does not reconcile — every entry's
+running balance is walked from the opening to the closing figure, and the
+totals the statement prints must match the ones parsed.
+
+Statements are assigned to an account by staging directory, not filename, since
+CBA names every download `Statement<date>.pdf` and the Bankwest home loan and
+offset share a layout:
+
+```bash
+mkdir -p staging/cba staging/cba-cc staging/bankwest-loan staging/bankwest-offset
+```
 
 ## Configuration
 

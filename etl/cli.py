@@ -10,8 +10,11 @@ from etl.normalizer import normalize_and_insert, load_payment_patterns
 from etl.tagger import Tagger
 from etl.parsers.airbnb_csv import AirbnbCSVParser
 from etl.parsers.amex_csv import AmexCSVParser
+from etl.parsers.bankwest_account_pdf import BankwestLoanPDFParser, BankwestOffsetPDFParser
 from etl.parsers.bankwest_csv import BankwestCSVParser
 from etl.parsers.bankwest_pdf import BankwestPDFParser
+from etl.parsers.cba_cc_pdf import CBACreditPDFParser
+from etl.parsers.cba_pdf import CBAPDFParser
 from etl.parsers.coles_csv import ColesCSVParser
 from etl.parsers.coles_pdf import ColesCreditPDFParser
 from etl.parsers.hsbc_pdf import HSBCPDFParser
@@ -39,6 +42,12 @@ PARSERS = {
     "bankwest": (BankwestPDFParser, "bankwest", "*.pdf"),
     "bankwest-csv": (BankwestCSVParser, "bankwest-csv", "*.csv"),
     "amex": (AmexCSVParser, "amex", "*.csv"),
+    "cba": (CBAPDFParser, "cba", "*.pdf"),
+    "cba-cc": (CBACreditPDFParser, "cba-cc", "*.pdf"),
+    # The loan and offset statements share a layout but not an account, so
+    # they are separated by staging directory rather than by filename.
+    "bankwest-loan": (BankwestLoanPDFParser, "bankwest-loan", "*.pdf"),
+    "bankwest-offset": (BankwestOffsetPDFParser, "bankwest-offset", "*.pdf"),
 }
 
 # Default account names for non-ING sources (ING uses file_prefix mapping)
@@ -53,6 +62,10 @@ ACCOUNT_NAMES = {
     "bankwest": "Bankwest",
     "bankwest-csv": "Bankwest",
     "amex": "Amex",
+    "cba": "CBA Smart Access",
+    "cba-cc": "CBA Awards Credit Card",
+    "bankwest-loan": "Bankwest Home Loan",
+    "bankwest-offset": "Bankwest Offset",
 }
 
 
