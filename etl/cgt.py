@@ -12,8 +12,9 @@ both ends as the ATO intends.
 """
 from dataclasses import dataclass
 from datetime import date
+from pathlib import Path
 
-from etl.parsers.commsec_pdf import BUY, SELL, Trade
+from etl.parsers.commsec_pdf import BUY, SELL, CommSecContractNoteParser, Trade
 
 # Individuals discount an eligible gain by half.
 DISCOUNT_RATE = 0.5
@@ -46,6 +47,31 @@ class CGTEvent:
     def financial_year(self) -> int:
         """Australian FY ending 30 June, labelled by the closing year."""
         return self.disposed.year + 1 if self.disposed.month > 6 else self.disposed.year
+
+    def as_dict(self) -> dict:
+        """JSON-ready form, dates as ISO strings."""
+        return {
+            "code": self.code,
+            "units": self.units,
+            "acquired": self.acquired.isoformat(),
+            "disposed": self.disposed.isoformat(),
+            "cost_base": self.cost_base,
+            "proceeds": self.proceeds,
+            "gain": self.gain,
+            "discountable": self.discountable,
+        }
+
+
+def events_from_notes(notes_dir: Path) -> list[CGTEvent]:
+    """Parse every contract note in a directory and match the disposals.
+
+    Returns nothing when there are no notes, so a ledger holding no shares
+    needs no special handling by its callers.
+    """
+    files = sorted(notes_dir.glob("*.pdf")) + sorted(notes_dir.glob("*.PDF"))
+    if not files:
+        return []
+    return match_disposals(CommSecContractNoteParser().parse_all(files))
 
 
 def match_disposals(trades: list[Trade]) -> list[CGTEvent]:

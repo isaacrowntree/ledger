@@ -13,6 +13,7 @@ from etl import rental as rental_calc
 from etl import schedules as sched_calc
 from etl import ato_returns as ato_archive
 from etl import manual_entries as manual_entry_calc
+from etl import cgt as cgt_calc
 from etl import depreciation as depreciation_calc
 
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -22,6 +23,9 @@ TAX_CONFIG_PATH = CONFIG_DIR / "tax.yaml"
 SCHEDULES_CONFIG_PATH = CONFIG_DIR / "schedules.yaml"
 ATO_RETURNS_CONFIG_PATH = CONFIG_DIR / "ato_returns.yaml"
 DEPRECIATION_CONFIG_PATH = CONFIG_DIR / "depreciation.yaml"
+# Contract notes stay in staging rather than being archived: a parcel bought
+# years ago is still needed to cost a disposal today.
+COMMSEC_NOTES_DIR = PROJECT_ROOT / "staging" / "commsec"
 
 app = Flask(__name__, static_folder=str(FRONTEND_DIST), static_url_path="")
 CORS(app)
@@ -31,6 +35,29 @@ def get_conn():
     conn = db.get_connection()
     db.init_db(conn)
     return conn
+
+
+def _capital_gains(fy: int) -> dict:
+    """Summarise capital gains for a year from the CommSec contract notes.
+
+    A missing or unreadable note must not take down the whole return, so the
+    failure is reported alongside a zeroed summary — the tax tab can then say
+    why the figure is absent rather than quietly showing nothing.
+    """
+    empty = {
+        "fy": fy, "events": [], "gross_gains": 0.0, "discountable_gains": 0.0,
+        "other_gains": 0.0, "losses": 0.0, "losses_applied": 0.0, "discount": 0.0,
+        "net_capital_gain": 0.0, "losses_carried_forward": 0.0, "error": None,
+    }
+    if not COMMSEC_NOTES_DIR.is_dir():
+        return empty
+    try:
+        events = cgt_calc.events_from_notes(COMMSEC_NOTES_DIR)
+    except Exception as exc:                     # noqa: BLE001 - surfaced to the UI
+        return {**empty, "error": str(exc)}
+
+    summary = cgt_calc.summarise(events, fy)
+    return {**summary, "events": [e.as_dict() for e in summary["events"]], "error": None}
 
 
 def _loan_transfer_clauses(prefix="t"):
@@ -1051,6 +1078,7 @@ def api_ato_return():
     manual = tax_config.get("manual_entries", {}).get(fy_int, [])
     manual_totals = manual_entry_calc.summarise(manual)
     tax_withheld = manual_entry_calc.tax_withheld(manual)
+    capital_gains = _capital_gains(fy_int)
 
     # Spouse info
     spouse = tax_config.get("taxpayer", {}).get("spouse", {})
@@ -1080,6 +1108,7 @@ def api_ato_return():
         + max(rental_net_total, 0)        # positive net rent adds to income
         + business_profit                 # positive business profit adds to income
         + manual_totals["income"]         # dividends etc. with no bank transaction
+        + capital_gains["net_capital_gain"]   # after any 50% discount
     )
     deductions_total = (
         abs(min(rental_net_total, 0))     # negative net rent (loss) is a deduction
@@ -1128,6 +1157,7 @@ def api_ato_return():
             },
             "work_trips": trip_deductions,
         },
+        "capital_gains": capital_gains,
         "manual_entries": manual,
         "manual_entry_totals": manual_totals,
         "overrides": [dict(o) for o in overrides],

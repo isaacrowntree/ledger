@@ -18,8 +18,7 @@ from etl.parsers.hsbc_pdf import HSBCPDFParser
 from etl.parsers.ing_csv import INGCSVParser
 from etl.parsers.ing_pdf import INGPDFParser
 from etl.parsers.paypal_csv import PayPalCSVParser
-from etl.parsers.commsec_pdf import CommSecContractNoteParser
-from etl.cgt import match_disposals, summarise
+from etl.cgt import events_from_notes, summarise
 from etl.splitter import load_tax_config, backfill_splits
 from etl.dedup import find_duplicates, resolve_duplicates
 from etl import rental
@@ -220,16 +219,14 @@ def cmd_cgt(fy: int, carried_forward_losses: float = 0.0):
     history has to stay available.
     """
     notes_dir = STAGING_DIR / "commsec"
-    files = sorted(notes_dir.glob("*.pdf")) + sorted(notes_dir.glob("*.PDF"))
-    if not files:
+    events = events_from_notes(notes_dir)
+    if not events:
         print(f"No contract notes found in {notes_dir}")
         return
 
-    trades = CommSecContractNoteParser().parse_all(files)
-    events = match_disposals(trades)
     summary = summarise(events, fy, carried_forward_losses)
 
-    print(f"\nCapital gains — FY {fy - 1}-{str(fy)[2:]}   ({len(trades)} contract notes)\n")
+    print(f"\nCapital gains — FY {fy - 1}-{str(fy)[2:]}\n")
     if not summary["events"]:
         print("  No disposals in this financial year.")
         return

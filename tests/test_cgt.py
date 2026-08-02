@@ -3,7 +3,7 @@ from datetime import date
 
 import pytest
 
-from etl.cgt import CGTError, match_disposals, summarise
+from etl.cgt import CGTError, events_from_notes, match_disposals, summarise
 from etl.parsers.commsec_pdf import BUY, SELL, Trade
 
 
@@ -183,3 +183,25 @@ class TestSummary:
     def test_empty_year(self):
         s = summarise([], 2025)
         assert s["net_capital_gain"] == 0.0 and s["events"] == []
+
+
+class TestSerialisation:
+    def test_as_dict_is_json_ready(self):
+        import json
+        event = match_disposals([
+            buy("AAA", date(2020, 1, 1), 100, 1000.0),
+            sell("AAA", date(2024, 8, 1), 100, 1500.0),
+        ])[0]
+        d = event.as_dict()
+        assert d["acquired"] == "2020-01-01" and d["disposed"] == "2024-08-01"
+        assert d["discountable"] is True
+        json.dumps(d)  # must not raise
+
+
+class TestLoadingNotes:
+    def test_empty_directory_yields_no_events(self, tmp_path):
+        """A ledger holding no shares needs no special handling."""
+        assert events_from_notes(tmp_path) == []
+
+    def test_missing_directory_yields_no_events(self, tmp_path):
+        assert events_from_notes(tmp_path / "nope") == []
