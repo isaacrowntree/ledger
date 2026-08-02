@@ -12,6 +12,7 @@ from etl.splitter import load_tax_config
 from etl import rental as rental_calc
 from etl import schedules as sched_calc
 from etl import ato_returns as ato_archive
+from etl import manual_entries as manual_entry_calc
 from etl import depreciation as depreciation_calc
 
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -1048,19 +1049,18 @@ def api_ato_return():
         "SELECT * FROM tax_overrides WHERE fy = ?", (fy_int,)
     ).fetchall()
     manual = tax_config.get("manual_entries", {}).get(fy_int, [])
-
-    # Tax withheld
-    tax_withheld = 0
-    for entry in manual:
-        if entry.get("label") == "Tax withheld":
-            tax_withheld = entry["amount"]
+    manual_totals = manual_entry_calc.summarise(manual)
+    tax_withheld = manual_entry_calc.tax_withheld(manual)
 
     # Spouse info
     spouse = tax_config.get("taxpayer", {}).get("spouse", {})
 
     # --- Final tax summary ----------------------------------------------
     # Build the assessable income / total deductions / taxable income / payable view
-    rental_net_total = sum(r["net_rent"] for r in rental_data)
+    # Agent-collected rent and agent-deducted fees never reach a bank feed, so
+    # the manual rental total joins the computed net before the profit/loss
+    # split below.
+    rental_net_total = sum(r["net_rent"] for r in rental_data) + manual_totals["rental"]
     trips_total = sum(t["total"] for t in trip_deductions)
 
     # Business: profits are always assessable; losses are a deduction UNLESS the
@@ -1079,12 +1079,14 @@ def api_ato_return():
         + interest
         + max(rental_net_total, 0)        # positive net rent adds to income
         + business_profit                 # positive business profit adds to income
+        + manual_totals["income"]         # dividends etc. with no bank transaction
     )
     deductions_total = (
         abs(min(rental_net_total, 0))     # negative net rent (loss) is a deduction
         + business_deductible_loss        # non-deferred business losses only
         + wfh_amount
         + trips_total
+        + manual_totals["deductions"]     # receipted deductions, e.g. donations
     )
     taxable_income = round(max(assessable - deductions_total, 0), 2)
 
@@ -1127,6 +1129,7 @@ def api_ato_return():
             "work_trips": trip_deductions,
         },
         "manual_entries": manual,
+        "manual_entry_totals": manual_totals,
         "overrides": [dict(o) for o in overrides],
         "spouse": spouse,
         "summary": summary,
