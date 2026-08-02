@@ -1,6 +1,7 @@
 import hashlib
 import re
 import sqlite3
+from collections import Counter
 from pathlib import Path
 from typing import Optional
 
@@ -46,8 +47,17 @@ def is_payment_to_source_of_truth(txn: RawTransaction, patterns: list[re.Pattern
     return any(p.search(desc_upper) for p in patterns)
 
 
-def compute_dedup_hash(txn: RawTransaction) -> str:
-    """Compute a dedup hash based on source type."""
+def compute_dedup_hash(txn: RawTransaction, occurrence: int = 0) -> str:
+    """Compute a dedup hash based on source type.
+
+    ``occurrence`` distinguishes genuinely repeated transactions — two rounds
+    at the same bar on the same day bill as identical date, description and
+    amount, and without this the second one is silently dropped as a
+    duplicate. It counts how many identical transactions preceded this one in
+    the same statement, so it is stable across re-ingests of that statement,
+    and it is zero for the first (and almost always only) occurrence, which
+    keeps hashes of already-imported transactions unchanged.
+    """
     if txn.source_type == "paypal" and txn.reference_id:
         data = txn.reference_id
     elif txn.source_type == "ing":
@@ -56,6 +66,8 @@ def compute_dedup_hash(txn: RawTransaction) -> str:
         data = f"{txn.date}|{txn.description}|{txn.amount}|{source_stem}"
     else:
         data = f"{txn.date}|{txn.description}|{txn.amount}"
+    if occurrence:
+        data = f"{data}|#{occurrence}"
     return hashlib.sha256(data.encode()).hexdigest()
 
 
@@ -77,9 +89,13 @@ def normalize_and_insert(
     inserted = 0
     skipped = 0
     transfers_cat_id = db.get_category_id(conn, "Transfers")
+    seen_in_batch: Counter = Counter()
 
     for txn in transactions:
-        dedup_hash = compute_dedup_hash(txn)
+        identity = (txn.date, txn.description, txn.amount)
+        occurrence = seen_in_batch[identity]
+        seen_in_batch[identity] += 1
+        dedup_hash = compute_dedup_hash(txn, occurrence)
 
         if db.hash_exists(conn, dedup_hash):
             skipped += 1

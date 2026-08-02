@@ -37,6 +37,36 @@ class TestDedupHash:
         txn = _make_txn("WOOLWORTHS", source_file="account_a_2025.pdf")
         assert compute_dedup_hash(txn) == compute_dedup_hash(txn)
 
+    def test_first_occurrence_hash_is_unchanged(self):
+        """Occurrence 0 must hash as before, so existing imports still match."""
+        txn = _make_txn("WOOLWORTHS", source_file="account_a_2025.pdf")
+        assert compute_dedup_hash(txn, 0) == compute_dedup_hash(txn)
+
+    def test_repeat_occurrence_gets_its_own_hash(self):
+        txn = _make_txn("RIVERSIDE BOWLING CLUB", amount=-8.0, source_type="cba-cc")
+        assert compute_dedup_hash(txn, 1) != compute_dedup_hash(txn, 0)
+
+
+class TestRepeatedTransactions:
+    def test_identical_same_day_transactions_both_insert(self, conn, categorizer, payment_patterns):
+        """Two rounds at the same bar bill identically but are not duplicates."""
+        txns = [
+            _make_txn("RIVERSIDE BOWLING CLUB", amount=-8.0, source_type="cba-cc"),
+            _make_txn("RIVERSIDE BOWLING CLUB", amount=-8.0, source_type="cba-cc"),
+        ]
+        inserted, skipped = normalize_and_insert(conn, txns, 1, categorizer, payment_patterns)
+        assert (inserted, skipped) == (2, 0)
+
+    def test_reingesting_the_same_statement_still_skips(self, conn, categorizer, payment_patterns):
+        """Occurrence is positional, so a re-import matches rather than doubling."""
+        txns = [
+            _make_txn("RIVERSIDE BOWLING CLUB", amount=-8.0, source_type="cba-cc"),
+            _make_txn("RIVERSIDE BOWLING CLUB", amount=-8.0, source_type="cba-cc"),
+        ]
+        normalize_and_insert(conn, txns, 1, categorizer, payment_patterns)
+        inserted, skipped = normalize_and_insert(conn, txns, 1, categorizer, payment_patterns)
+        assert (inserted, skipped) == (0, 2)
+
 
 class TestIdempotency:
     def test_duplicate_insert_is_skipped(self, conn, categorizer, payment_patterns):
