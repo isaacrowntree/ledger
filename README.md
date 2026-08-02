@@ -60,6 +60,7 @@ python -m api
 | Coles Mastercard | CSV export | `etl/parsers/coles_csv.py` |
 | Amex | CSV download | `etl/parsers/amex_csv.py` |
 | Airbnb | CSV payout report | `etl/parsers/airbnb_csv.py` |
+| CommSec | PDF contract notes (CGT) | `etl/parsers/commsec_pdf.py` |
 
 Adding a new bank: implement `BaseParser` in `etl/parsers/`, add to `PARSERS` in `etl/cli.py`.
 
@@ -133,6 +134,7 @@ ledger ingest --source ing       # Ingest only ING statements
 ledger ingest --dry-run          # Preview without writing to DB
 ledger split --backfill --fy 2025  # Compute business splits
 ledger tax --fy 2025             # Print ATO tax summary
+ledger cgt --fy 2025             # Capital gains from CommSec contract notes
 ```
 
 ## API endpoints
