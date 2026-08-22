@@ -44,6 +44,44 @@ accounts:
   #   account_type: loan
   #   file_prefix: my_mortgage
 
+  # === Commonwealth Bank ===
+  # PDF statements only; drop them in staging/cba/ and staging/cba-cc/.
+  # The account each statement belongs to comes from the staging directory,
+  # not the filename — CBA names every download "Statement<date>.pdf".
+
+  # - name: "CBA Smart Access"
+  #   source_type: cba
+  #   currency: AUD
+  #   account_type: checking
+
+  # - name: "CBA Awards Credit Card"
+  #   source_type: cba-cc
+  #   currency: AUD
+  #   account_type: credit
+  #   source_of_truth: true
+  #   payment_patterns:
+  #     - "Transfer to xx1234"      # how the card payment reads on Smart Access
+
+  # === Bankwest home loan + offset ===
+  # These two share a statement layout, so they are told apart by staging
+  # directory: staging/bankwest-loan/ and staging/bankwest-offset/. Each
+  # parser checks the statement title and refuses a file staged under the
+  # wrong account. The offset's repayments to the loan appear on both
+  # statements, so mark one side to avoid double-counting.
+
+  # - name: "Bankwest Home Loan"
+  #   source_type: bankwest-loan
+  #   currency: AUD
+  #   account_type: loan
+  #   source_of_truth: true
+  #   payment_patterns:
+  #     - "PERIODICAL PAYMENT TO BANKWEST SIMPLE HL"
+
+  # - name: "Bankwest Offset"
+  #   source_type: bankwest-offset
+  #   currency: AUD
+  #   account_type: savings
+
   # === Airbnb (if using Airbnb CSV parser) ===
   # - name: "Airbnb"
   #   source_type: airbnb

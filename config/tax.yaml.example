@@ -64,10 +64,32 @@ depreciation_schedules: []
   #       amount: 500
   #       fy: 2025
 
-# Only enter items NOT visible in bank transactions:
+# Only enter items NOT visible in bank transactions — an agent nets their
+# commission out of the rent before depositing it, dividends are paid to a
+# broker, a donation receipt arrives by post.
+#
+# `section` decides where an entry lands in the return:
+#   income     — added to assessable income (dividends, franking credits)
+#   deductions — reduces taxable income; counted by magnitude, either sign
+#   rental     — joins computed net rent; income positive, expenses negative
+# Any other section (or none) is carried for display only and changes no total.
+#
+# `label: "Tax withheld"` is special: it becomes the PAYG credit rather than
+# income, so it needs no section.
 manual_entries: {}
   # 2025:
   #   - label: "Tax withheld"
   #     amount: 50000
-  #     section: "income"
   #     notes: "From payment summary"
+  #   - label: "Rental income (agent statement)"
+  #     amount: 24934.14
+  #     section: "rental"
+  #   - label: "Property management fee"
+  #     amount: -1645.63
+  #     section: "rental"
+  #   - label: "Dividends — franking credits"
+  #     amount: 28.39
+  #     section: "income"
+  #   - label: "Donations"
+  #     amount: -689.00
+  #     section: "deductions"

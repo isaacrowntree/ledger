@@ -14,8 +14,11 @@ from etl.reconcile import reconcile_account
 from etl.tagger import Tagger
 from etl.parsers.airbnb_csv import AirbnbCSVParser
 from etl.parsers.amex_csv import AmexCSVParser
+from etl.parsers.bankwest_account_pdf import BankwestLoanPDFParser, BankwestOffsetPDFParser
 from etl.parsers.bankwest_csv import BankwestCSVParser
 from etl.parsers.bankwest_pdf import BankwestPDFParser
+from etl.parsers.cba_cc_pdf import CBACreditPDFParser
+from etl.parsers.cba_pdf import CBAPDFParser
 from etl.parsers.coles_csv import ColesCSVParser
 from etl.parsers.coles_pdf import ColesCreditPDFParser
 from etl.parsers.hsbc_pdf import HSBCPDFParser
@@ -23,6 +26,7 @@ from etl.parsers.hsbc_csv import HSBCCSVParser
 from etl.parsers.ing_csv import INGCSVParser
 from etl.parsers.ing_pdf import INGPDFParser
 from etl.parsers.paypal_csv import PayPalCSVParser
+from etl.cgt import events_from_notes, summarise
 from etl.splitter import load_tax_config, backfill_splits
 from etl.dedup import find_duplicates, resolve_duplicates
 from etl import rental
@@ -45,6 +49,12 @@ PARSERS = {
     "bankwest": (BankwestPDFParser, "bankwest", "*.pdf"),
     "bankwest-csv": (BankwestCSVParser, "bankwest-csv", "*.csv"),
     "amex": (AmexCSVParser, "amex", "*.csv"),
+    "cba": (CBAPDFParser, "cba", "*.pdf"),
+    "cba-cc": (CBACreditPDFParser, "cba-cc", "*.pdf"),
+    # The loan and offset statements share a layout but not an account, so
+    # they are separated by staging directory rather than by filename.
+    "bankwest-loan": (BankwestLoanPDFParser, "bankwest-loan", "*.pdf"),
+    "bankwest-offset": (BankwestOffsetPDFParser, "bankwest-offset", "*.pdf"),
 }
 
 # Default account names for non-ING sources (ING uses file_prefix mapping)
@@ -60,6 +70,10 @@ ACCOUNT_NAMES = {
     "bankwest": "Bankwest",
     "bankwest-csv": "Bankwest",
     "amex": "Amex",
+    "cba": "CBA Smart Access",
+    "cba-cc": "CBA Awards Credit Card",
+    "bankwest-loan": "Bankwest Home Loan",
+    "bankwest-offset": "Bankwest Offset",
 }
 
 
@@ -122,6 +136,11 @@ def main():
                             help="Skip the per-record running balance check")
     rec_parser.add_argument("--verbose", action="store_true", help="List every statement anchor")
 
+    cgt_parser = sub.add_parser("cgt", help="Capital gains from CommSec contract notes in staging/commsec/")
+    cgt_parser.add_argument("--fy", type=int, required=True, help="Financial year (e.g. 2025 for FY 2024-25)")
+    cgt_parser.add_argument("--carried-forward-losses", type=float, default=0.0,
+                            help="Net capital losses carried forward from an earlier year (label 18V)")
+
     dedup_parser = sub.add_parser("dedup", help="Find and resolve cross-account duplicate transactions")
     dedup_parser.add_argument("--dry-run", action="store_true", help="Preview without writing to DB")
 
@@ -152,6 +171,8 @@ def main():
     elif args.command == "reconcile":
         cmd_reconcile(account=args.account, since=args.since,
                       chain=not args.no_chain, verbose=args.verbose)
+    elif args.command == "cgt":
+        cmd_cgt(fy=args.fy, carried_forward_losses=args.carried_forward_losses)
     elif args.command == "dedup":
         cmd_dedup(dry_run=args.dry_run)
     elif args.command == "tag":
@@ -393,6 +414,45 @@ def cmd_reconcile(account: str | None = None, since: str | None = None,
 
     print(f"\n{total_drifts} statement-gap drift(s), {total_breaks} running-balance break(s).")
     conn.close()
+
+
+def cmd_cgt(fy: int, carried_forward_losses: float = 0.0):
+    """Report capital gains for a financial year from CommSec contract notes.
+
+    Notes are read in place rather than archived like statements: a parcel
+    bought years ago is still needed to cost a disposal today, so the whole
+    history has to stay available.
+    """
+    notes_dir = STAGING_DIR / "commsec"
+    events = events_from_notes(notes_dir)
+    if not events:
+        print(f"No contract notes found in {notes_dir}")
+        return
+
+    summary = summarise(events, fy, carried_forward_losses)
+
+    print(f"\nCapital gains — FY {fy - 1}-{str(fy)[2:]}\n")
+    if not summary["events"]:
+        print("  No disposals in this financial year.")
+        return
+
+    print(f"  {'code':<6}{'units':>9}  {'acquired':<11}{'disposed':<11}"
+          f"{'cost base':>12}{'proceeds':>12}{'gain':>12}  discount")
+    for e in summary["events"]:
+        print(f"  {e.code:<6}{e.units:>9,.0f}  {e.acquired}  {e.disposed}"
+              f"{e.cost_base:>12,.2f}{e.proceeds:>12,.2f}{e.gain:>12,.2f}"
+              f"  {'yes' if e.discountable else 'no'}")
+
+    print()
+    for label, key in [
+        ("Gross capital gains", "gross_gains"),
+        ("Capital losses", "losses"),
+        ("Losses applied", "losses_applied"),
+        ("50% discount", "discount"),
+        ("Net capital gain", "net_capital_gain"),
+        ("Losses carried forward", "losses_carried_forward"),
+    ]:
+        print(f"  {label:<24}{summary[key]:>12,.2f}")
 
 
 def cmd_dedup(dry_run: bool = False):

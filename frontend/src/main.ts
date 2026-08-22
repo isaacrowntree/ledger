@@ -260,6 +260,114 @@ async function loadTax() {
   renderATOReturn(data);
 }
 
+// Capital gains are computed from contract notes, so show the parcels behind
+// the number — the discount depends on each parcel's holding period, which a
+// single total gives no way to check.
+function renderCapitalGains(cg: ATOReturn["capital_gains"]): string {
+  if (cg.error) {
+    return `
+      <div class="tax-section">
+        <h3>Item 18: Capital Gains</h3>
+        <p class="tax-hint">Could not be calculated: ${escapeHtml(cg.error)}</p>
+      </div>`;
+  }
+  if (cg.events.length === 0) return "";
+
+  const rows = cg.events.map((e) => `
+    <tr>
+      <td>${escapeHtml(e.code)}</td>
+      <td>${fmt(e.units)}</td>
+      <td>${escapeHtml(e.acquired)}</td>
+      <td>${escapeHtml(e.disposed)}</td>
+      <td>$${fmt(e.cost_base)}</td>
+      <td>$${fmt(e.proceeds)}</td>
+      <td class="${e.gain >= 0 ? "positive" : "negative"}">
+        ${e.gain < 0 ? "-" : ""}$${fmt(Math.abs(e.gain))}
+      </td>
+      <td>${e.discountable ? "50%" : "—"}</td>
+    </tr>`).join("");
+
+  return `
+    <div class="tax-section">
+      <h3>Item 18: Capital Gains</h3>
+      <p class="tax-hint">
+        Parcels matched first-in-first-out from CommSec contract notes.
+        The 50% discount applies to a parcel held more than 12 months.
+      </p>
+      <table class="tax-table">
+        <thead>
+          <tr>
+            <th>Code</th><th>Units</th><th>Acquired</th><th>Disposed</th>
+            <th>Cost base</th><th>Proceeds</th><th>Gain</th><th>Discount</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows}
+          <tr><td colspan="6">Gross capital gains</td>
+              <td class="positive">$${fmt(cg.gross_gains)}</td><td></td></tr>
+          ${cg.losses > 0 ? `
+          <tr><td colspan="6">Capital losses applied</td>
+              <td class="negative">-$${fmt(cg.losses_applied)}</td><td></td></tr>` : ""}
+          <tr><td colspan="6">Less: 50% discount</td>
+              <td class="negative">-$${fmt(cg.discount)}</td><td></td></tr>
+          <tr class="tax-total"><td colspan="6">Net capital gain</td>
+              <td>$${fmt(cg.net_capital_gain)}</td><td></td></tr>
+          ${cg.losses_carried_forward > 0 ? `
+          <tr><td colspan="6">Net capital losses carried forward (18V)</td>
+              <td>$${fmt(cg.losses_carried_forward)}</td><td></td></tr>` : ""}
+        </tbody>
+      </table>
+    </div>`;
+}
+
+// Manual entries move the totals above, so they have to be visible — a figure
+// that silently changes taxable income with nothing on screen is a trap.
+function renderManualEntries(
+  entries: ATOReturn["manual_entries"],
+  totals: ATOReturn["manual_entry_totals"],
+): string {
+  if (entries.length === 0) return "";
+
+  const rows = entries.map((e) => {
+    const counted = ["income", "deductions", "rental"].includes(
+      (e.section || "").trim().toLowerCase(),
+    );
+    return `
+      <tr>
+        <td>${escapeHtml(e.label)}</td>
+        <td>${counted ? escapeHtml(e.section) : `<span class="tax-hint">display only</span>`}</td>
+        <td class="${e.amount >= 0 ? "positive" : "negative"}">
+          ${e.amount < 0 ? "-" : ""}$${fmt(Math.abs(e.amount))}
+        </td>
+        <td class="tax-hint">${escapeHtml(e.notes || "")}</td>
+      </tr>`;
+  }).join("");
+
+  return `
+    <div class="tax-section">
+      <h3>Manual Entries</h3>
+      <p class="tax-hint">
+        Figures entered in tax.yaml for amounts no bank transaction shows —
+        agent-collected rent, dividends, posted receipts. Only the sections
+        below are counted; anything else is carried for reference.
+      </p>
+      <table class="tax-table">
+        <thead>
+          <tr><th>Item</th><th>Counted as</th><th>Amount</th><th>Notes</th></tr>
+        </thead>
+        <tbody>
+          ${rows}
+          <tr class="tax-total"><td colspan="2">Added to assessable income</td>
+              <td>$${fmt(totals.income)}</td><td></td></tr>
+          <tr class="tax-total"><td colspan="2">Added to deductions</td>
+              <td>$${fmt(totals.deductions)}</td><td></td></tr>
+          <tr class="tax-total"><td colspan="2">Applied to net rent</td>
+              <td>${totals.rental < 0 ? "-" : ""}$${fmt(Math.abs(totals.rental))}</td><td></td></tr>
+        </tbody>
+      </table>
+    </div>`;
+}
+
 function renderATOReturn(data: ATOReturn) {
   const el = document.getElementById("tax-summary")!;
 
@@ -362,6 +470,9 @@ function renderATOReturn(data: ATOReturn) {
       </table>
     </div>
 
+    <!-- Item 18: Capital gains -->
+    ${renderCapitalGains(data.capital_gains)}
+
     <!-- Item 21: Rental -->
     ${data.rental.map((r) => `
       <div class="tax-section">
@@ -452,6 +563,9 @@ function renderATOReturn(data: ATOReturn) {
         </tbody>
       </table>
     </div>
+
+    <!-- Manual entries -->
+    ${renderManualEntries(data.manual_entries, data.manual_entry_totals)}
 
     <!-- Spouse -->
     ${data.spouse?.name ? `
