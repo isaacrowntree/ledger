@@ -3,6 +3,8 @@ from pathlib import Path
 
 import pdfplumber
 
+from etl.parsers.pdf_layout import ColumnRuler, Word, make_row
+
 from etl.contract import BalanceConvention, ParsedRow, ParsedStatement
 from etl.models import RawTransaction
 from etl.parsers.base import BaseParser, chronological, labelled_balance, money
@@ -131,7 +133,12 @@ class BankwestPDFParser(BaseParser):
         return "\n".join(pages)
 
     def _page_text_with_columns(self, page) -> str | None:
-        """Page text with credit-column amounts marked, or None if not laid out."""
+        """Page text with credit-column amounts marked, or None if not laid out.
+
+        Uses the shared ColumnRuler, which anchors on each column's RIGHT edge --
+        these columns are right-aligned, so left edges drift with the width of
+        the number while right edges stay put.
+        """
         try:
             words = page.extract_words()
         except Exception:
@@ -143,33 +150,29 @@ class BankwestPDFParser(BaseParser):
         for word in words:
             lines.setdefault(round(word["top"] / 3), []).append(word)
 
-        credit_x = debit_x = None
+        ruler = None
         header_key = None
         for key in sorted(lines):
-            row = sorted(lines[key], key=lambda w: w["x0"])
-            labels = {w["text"].lower(): w for w in row}
-            if "credit" in labels and "debit" in labels:
-                credit_x = (labels["credit"]["x0"] + labels["credit"]["x1"]) / 2
-                debit_x = (labels["debit"]["x0"] + labels["debit"]["x1"]) / 2
+            row = make_row([Word(w["text"], w["x0"], w["x1"]) for w in lines[key]])
+            ruler = ColumnRuler.from_header(row, {"debit": "Debit", "credit": "Credit"})
+            if ruler:
                 header_key = key
                 break
 
-        if credit_x is None or debit_x is None or credit_x <= debit_x:
+        if ruler is None:
             return None
 
-        boundary = (debit_x + credit_x) / 2
         rendered = []
         for key in sorted(lines):
-            row = sorted(lines[key], key=lambda w: w["x0"])
+            row = make_row([Word(w["text"], w["x0"], w["x1"]) for w in lines[key]])
             parts = []
-            for word in row:
-                text = word["text"]
-                centre = (word["x0"] + word["x1"]) / 2
+            for word in row.words:
+                text = word.text
                 # Only inside the transaction list. The account summary above it
-                # prints figures in the same x-range, and marking those turned
+                # prints figures in the same columns, and marking those turned
                 # "Opening balance $10.00" into a credit of -10.00.
                 if (key > header_key and AMOUNT_RE.fullmatch(text)
-                        and centre > boundary):
+                        and ruler.column_of(word) == "credit"):
                     text = f"{text} CR"
                 parts.append(text)
             rendered.append(" ".join(parts))

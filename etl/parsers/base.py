@@ -193,6 +193,36 @@ def labelled_balance(text: str, label: str) -> float | None:
     return value
 
 
+def statement_from_transactions(
+    parser: "BaseParser",
+    file_path,
+    transactions: list,
+    opening_balance: float | None = None,
+    closing_balance: float | None = None,
+    period_start: str | None = None,
+    period_end: str | None = None,
+) -> ParsedStatement:
+    """Build a ParsedStatement from a parser's own RawTransaction list.
+
+    A per-row running balance is picked up from raw_data where the source
+    prints one; sources that print only a statement total (a credit card) leave
+    it None and are checked against opening/closing instead.
+    """
+    rows = [
+        ParsedRow(
+            index=i, date=t.date, description=t.description, amount=t.amount,
+            balance=money((t.raw_data or {}).get("balance")),
+            raw=t.raw_data or {}, currency=t.currency,
+            original_amount=t.original_amount, original_currency=t.original_currency,
+            fee=t.fee, reference_id=t.reference_id,
+        )
+        for i, t in enumerate(transactions)
+    ]
+    return parser.build(file_path, rows, opening_balance=opening_balance,
+                        closing_balance=closing_balance,
+                        period_start=period_start, period_end=period_end)
+
+
 def chronological(transactions: list) -> list:
     """Put rows into the order the engine requires: oldest first.
 

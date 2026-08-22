@@ -315,7 +315,30 @@ export interface ATOReturn {
       total: number;
     }[];
   };
+  capital_gains: {
+    fy: number;
+    events: {
+      code: string;
+      units: number;
+      acquired: string;
+      disposed: string;
+      cost_base: number;
+      proceeds: number;
+      gain: number;
+      discountable: boolean;
+    }[];
+    gross_gains: number;
+    discountable_gains: number;
+    other_gains: number;
+    losses: number;
+    losses_applied: number;
+    discount: number;
+    net_capital_gain: number;
+    losses_carried_forward: number;
+    error: string | null;
+  };
   manual_entries: { label: string; amount: number; section: string; notes: string }[];
+  manual_entry_totals: { income: number; deductions: number; rental: number };
   spouse: { name: string; taxable_income: number };
   summary: {
     assessable_income: number;
