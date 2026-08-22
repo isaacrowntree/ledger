@@ -37,7 +37,7 @@ def conn():
 def _add_payment(conn, dt, amount, tag=None):
     account_id = db.ensure_account(conn, "Test", "test")
     txn_id = db.insert_transaction(
-        conn, account_id, dt, "SILVANA TRANSFER", amount, None, None, 0,
+        conn, account_id, dt, "PARTNER TRANSFER", amount, None, None, 0,
         None, 1.0, None, "test", f"hash-{dt}-{amount}", "test.csv", "{}",
     )
     if tag:
@@ -87,7 +87,7 @@ class TestNextOccurrence:
 
 
 class TestComputeSchedule:
-    def test_silvana_share_and_expected(self, config):
+    def test_partner_share_and_expected(self, config):
         sched = config["schedules"][0]
         result = compute_schedule(None, sched, date(2026, 6, 14))
         # 40% of 1177.81 = 471.124 -> 471.12
