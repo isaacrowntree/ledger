@@ -72,7 +72,7 @@ Always works, no setup. The fallback when nothing else does.
 | Amex | `staging/amex/` | `*.csv` |
 | Airbnb | `staging/airbnb/` | `*.csv` |
 
-4. Prefix filenames with the `file_prefix` from `config/accounts.yaml` so the parser binds to the right account. Example: `isaac_business_2025-07-01_to_2025-09-30.pdf`.
+4. Prefix filenames with the `file_prefix` from `config/accounts.yaml` so the parser binds to the right account. Example: `business_2025-07-01_to_2025-09-30.pdf`.
 
 5. Run:
 
