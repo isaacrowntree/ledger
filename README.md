@@ -58,6 +58,7 @@ python -m api
 | HSBC | PDF statements | `etl/parsers/hsbc_pdf.py` |
 | Coles Mastercard | PDF statements | `etl/parsers/coles_pdf.py` |
 | Coles Mastercard | CSV export | `etl/parsers/coles_csv.py` |
+| HSBC | CSV export (TransHist) | `etl/parsers/hsbc_csv.py` |
 | Amex | CSV download | `etl/parsers/amex_csv.py` |
 | Airbnb | CSV payout report | `etl/parsers/airbnb_csv.py` |
 
@@ -133,7 +134,55 @@ ledger ingest --source ing       # Ingest only ING statements
 ledger ingest --dry-run          # Preview without writing to DB
 ledger split --backfill --fy 2025  # Compute business splits
 ledger tax --fy 2025             # Print ATO tax summary
+ledger reconcile                 # Check balances against statement closing balances
+ledger reconcile --since 2026-01-01 --account Bankwest
+ledger ingest --force            # Ingest even if a statement fails validation
 ```
+
+### Ingest-time validation
+
+Parsers describe statements; the engine decides what enters the ledger. Before
+anything is written, a statement is checked against its own printed balances, and
+one that does not add up is refused rather than partially ingested:
+
+```
+  ! balance_mismatch: rows sum to -1,234.56 but opening 1,000.00 -> closing 2,204.58 implies -1,204.58 (-29.98)
+  REFUSED -- statement does not account for its own printed balances; nothing was ingested.
+```
+
+That is almost always a parser bug -- fix the parser rather than reaching for
+`--force`. See `docs/adding-a-bank` for the contract a parser must satisfy.
+
+### Stitching overlapping statements
+
+A bank's PDF and CSV exports describe the same transaction with different text, and
+often a different date basis (transaction vs posting date), so the two formats cannot
+dedup against each other. Ingest one format per period and clip at the boundary:
+
+```sh
+ledger ingest --source bankwest                        # statements through 04 Aug
+ledger ingest --source bankwest-csv --from 2026-08-05  # CSV covers only the tail
+```
+
+Windowed imports are left in `staging/` rather than archived, since the file still
+holds transactions outside the window.
+
+### Reconciliation
+
+`ledger reconcile` verifies the ledger against the balances printed on statements,
+which is what catches a silent gap that dedup cannot:
+
+- **Anchor check** — between two consecutive statements, the transactions in between
+  must account for exactly the change in printed closing balance. A shortfall means
+  missing transactions; an excess means double-counting. Works even for sources that
+  print no per-record balance.
+- **Running-balance chain check** — where a source prints a balance per line (ING, the
+  Bankwest CSV), each row's balance must equal the previous plus the amount. This
+  localises a break to the exact transaction. A row stored with an inverted sign shows
+  up as a drift of exactly twice its amount.
+
+Transactions are attributed to statements **by file, not by date** — banks post with a
+lag, so a row dated before a statement's end can appear on the next one.
 
 ## API endpoints
 

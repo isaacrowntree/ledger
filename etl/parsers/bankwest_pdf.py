@@ -3,8 +3,9 @@ from pathlib import Path
 
 import pdfplumber
 
+from etl.contract import BalanceConvention, ParsedRow, ParsedStatement
 from etl.models import RawTransaction
-from etl.parsers.base import BaseParser
+from etl.parsers.base import BaseParser, chronological, labelled_balance, money
 
 MONTH_MAP = {
     "Jan": "01", "Feb": "02", "Mar": "03", "Apr": "04",
@@ -69,7 +70,27 @@ class BankwestPDFParser(BaseParser):
 
     source_type = "bankwest"
 
-    def parse(self, file_path: Path) -> list[RawTransaction]:
+    # A credit card statement quotes what is OWED: spending makes it rise.
+    balance_convention = BalanceConvention.OWING
+
+    def parse_statement(self, file_path: Path) -> ParsedStatement:
+        transactions = chronological(self._read(file_path))
+        text = self._extract_text(file_path)
+        rows = [
+            ParsedRow(index=i, date=t.date, description=t.description,
+                      amount=t.amount, raw=t.raw_data or {}, currency=t.currency,
+                      original_amount=t.original_amount,
+                      original_currency=t.original_currency, fee=t.fee,
+                      reference_id=t.reference_id)
+            for i, t in enumerate(transactions)
+        ]
+        return self.build(
+            file_path, rows,
+            opening_balance=labelled_balance(text, "Opening [Bb]alance"),
+            closing_balance=labelled_balance(text, "Closing [Bb]alance"),
+        )
+
+    def _read(self, file_path: Path) -> list[RawTransaction]:
         text = self._extract_text(file_path)
         closing_balance = self._extract_closing_balance(text)
         entries = self._parse_entries(text)
@@ -89,13 +110,70 @@ class BankwestPDFParser(BaseParser):
         return None
 
     def _extract_text(self, file_path: Path) -> str:
+        """Flatten the statement to text, keeping which COLUMN each amount is in.
+
+        The Debit and Credit columns are the only reliable way to tell a charge
+        from a credit -- descriptions do not say. Plain text extraction discards
+        the x-positions that carry that, so amounts sitting under the Credit
+        column header are marked with a trailing "CR" as the text is built.
+
+        Falls back to plain extraction for any page without a recognisable
+        column header, where the parser's description keywords still apply.
+        """
         pages = []
         with pdfplumber.open(file_path) as pdf:
             for page in pdf.pages:
-                text = page.extract_text()
-                if text:
-                    pages.append(text)
+                marked = self._page_text_with_columns(page)
+                if marked is None:
+                    marked = page.extract_text()
+                if marked:
+                    pages.append(marked)
         return "\n".join(pages)
+
+    def _page_text_with_columns(self, page) -> str | None:
+        """Page text with credit-column amounts marked, or None if not laid out."""
+        try:
+            words = page.extract_words()
+        except Exception:
+            return None
+        if not words:
+            return None
+
+        lines: dict[float, list[dict]] = {}
+        for word in words:
+            lines.setdefault(round(word["top"] / 3), []).append(word)
+
+        credit_x = debit_x = None
+        header_key = None
+        for key in sorted(lines):
+            row = sorted(lines[key], key=lambda w: w["x0"])
+            labels = {w["text"].lower(): w for w in row}
+            if "credit" in labels and "debit" in labels:
+                credit_x = (labels["credit"]["x0"] + labels["credit"]["x1"]) / 2
+                debit_x = (labels["debit"]["x0"] + labels["debit"]["x1"]) / 2
+                header_key = key
+                break
+
+        if credit_x is None or debit_x is None or credit_x <= debit_x:
+            return None
+
+        boundary = (debit_x + credit_x) / 2
+        rendered = []
+        for key in sorted(lines):
+            row = sorted(lines[key], key=lambda w: w["x0"])
+            parts = []
+            for word in row:
+                text = word["text"]
+                centre = (word["x0"] + word["x1"]) / 2
+                # Only inside the transaction list. The account summary above it
+                # prints figures in the same x-range, and marking those turned
+                # "Opening balance $10.00" into a credit of -10.00.
+                if (key > header_key and AMOUNT_RE.fullmatch(text)
+                        and centre > boundary):
+                    text = f"{text} CR"
+                parts.append(text)
+            rendered.append(" ".join(parts))
+        return "\n".join(rendered)
 
     def _parse_entries(self, text: str) -> list[dict]:
         lines = text.split("\n")
@@ -108,8 +186,11 @@ class BankwestPDFParser(BaseParser):
             if not line:
                 continue
 
-            # Detect start of transaction section
-            if re.match(r"^Date\s+Description\s+(Debit|Amount)", line):
+            # Detect start of transaction section. The column layout has varied
+            # over the years -- an older statement carries an extra "Card" column
+            # -- and a header regex too narrow to match it meant the section never
+            # opened and the whole statement parsed to nothing.
+            if re.match(r"^Date\s+Description\b.*\b(Debit|Credit|Amount)\b", line):
                 in_transactions = True
                 continue
 
@@ -150,21 +231,27 @@ class BankwestPDFParser(BaseParser):
                     desc = rest
                     for amt in amounts:
                         desc = desc.replace(amt, "").strip()
-                    # Clean trailing whitespace and location codes
+                    # Clean trailing whitespace, location codes and the column marker.
+                    desc = re.sub(r"\s+CR\b", " ", desc)
                     desc = re.sub(r"\s+", " ", desc).strip()
 
                     if len(amounts) == 1:
                         amt_val = self._parse_amount(amounts[0])
-                        # Check column position to determine debit vs credit
-                        # Credits appear later in the line (further right)
-                        amt_pos = rest.rfind(amounts[0])
-                        # If the amount is near the end AND there's significant space before it,
-                        # it could be in either column. Use context: "PAYMENT" / "RECEIVED" = credit
+                        # Which COLUMN the amount sits in decides whether it is a
+                        # charge or a credit. Extraction marks credit-column
+                        # amounts with a trailing "CR"; guessing from the
+                        # description instead turned every credit that did not
+                        # happen to say "REFUND" into spending.
+                        marked_credit = re.search(
+                            re.escape(amounts[0]) + r"\s*CR\b", rest)
                         desc_upper = desc.upper()
-                        if any(w in desc_upper for w in ["PAYMENT RECEIVED", "CREDIT", "REFUND", "REVERSAL"]):
-                            amount = amt_val  # credit (positive)
+                        keyword_credit = any(
+                            w in desc_upper
+                            for w in ["PAYMENT RECEIVED", "CREDIT", "REFUND", "REVERSAL"])
+                        if marked_credit or keyword_credit:
+                            amount = amt_val
                         else:
-                            amount = -amt_val  # debit (negative = expense)
+                            amount = -amt_val
                     elif len(amounts) == 2:
                         # Both debit and credit on same line (unusual)
                         amount = -self._parse_amount(amounts[0]) + self._parse_amount(amounts[1])

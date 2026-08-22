@@ -3,11 +3,11 @@ schedules:
     start: 2026-06-01
     frequency: fortnightly
     amount: 1177.81
-    counterparty: Silvana
+    counterparty: Partner
     their_pct: 40
     notes: 60/40 split
     settle:
-      match_tag: silvana-rent
+      match_tag: partner-rent
 
   - name: Monthly subscription
     start: 2026-01-15

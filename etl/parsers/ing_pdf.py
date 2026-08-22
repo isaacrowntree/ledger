@@ -1,10 +1,13 @@
+import math
 import re
 from pathlib import Path
 
 import pdfplumber
 
+from etl.contract import BalanceConvention, ParsedRow, ParsedStatement
 from etl.models import RawTransaction
-from etl.parsers.base import BaseParser
+from etl.parsers.base import (BaseParser, chronological, detect_convention,
+                              labelled_balance, money, resign_unsigned_rows)
 
 # ING AU statement format:
 # Date        Details                          Money out $  Money in $  Balance $
@@ -37,6 +40,15 @@ SKIP_PATTERNS = [
     re.compile(r"^\d+-[ISE]$"),
 ]
 
+# Notices that sit in the transaction list but move no money. Matched anywhere in
+# the line because they begin with a date, exactly like a real transaction:
+#   "10/02/2026 RATE CHANGED FM 5.34% TO 5.59%"
+# Left in, the interest RATE (5.34) is read as an amount and becomes a phantom
+# transaction that breaks the statement's balance chain.
+NON_TRANSACTION_PATTERNS = [
+    re.compile(r"RATE CHANGED FM\s+[\d.]+%", re.I),
+]
+
 # Header pattern for loan statements: "Date Details Debit Credit Balance $"
 LOAN_HEADER_RE = re.compile(r"^Date\s+Details\s+Debit\s+Credit\s+Balance")
 
@@ -46,7 +58,53 @@ class INGPDFParser(BaseParser):
 
     source_type = "ing"
 
-    def parse(self, file_path: Path) -> list[RawTransaction]:
+    # An everyday account's balance moves the way the money moves. A mortgage
+    # statement may quote the SAME debt as "-$307,416.41" or "307,153.72"
+    # depending on layout, so the convention is settled per file below.
+    balance_convention = BalanceConvention.SIGNED
+
+    def parse_statement(self, file_path: Path) -> ParsedStatement:
+        transactions = chronological(self._read(file_path))
+        text = self._extract_text(file_path)
+
+        rows = [
+            ParsedRow(index=i, date=t.date, description=t.description, amount=t.amount,
+                      balance=money((t.raw_data or {}).get("balance")),
+                      raw=t.raw_data or {}, currency=t.currency,
+                      original_amount=t.original_amount,
+                      original_currency=t.original_currency, fee=t.fee,
+                      reference_id=t.reference_id)
+            for i, t in enumerate(transactions)
+        ]
+
+        # The summary block is authoritative and covers the whole statement,
+        # including one with no transactions at all.
+        opening, closing = summary_balances(text)
+        if opening is None:
+            opening = labelled_balance(text, "Opening balance")
+        if closing is None:
+            closing = labelled_balance(text, "Closing balance")
+
+        # Interim statements print only a closing figure, but the running balance
+        # on the first row implies the opening -- enough to check the arithmetic.
+        if opening is None and rows and rows[0].balance is not None:
+            opening = round(rows[0].balance - rows[0].amount, 2)
+        if closing is None and rows and rows[-1].balance is not None:
+            closing = rows[-1].balance
+
+        statement = self.build(file_path, rows,
+                               opening_balance=opening, closing_balance=closing)
+
+        # Which way the balances point is decided by the balances, never by
+        # prose: an everyday statement mentions "Orange Advantage" in a product
+        # footer, and sniffing for that classified a transaction account as a
+        # mortgage and inverted every amount on it.
+        statement.balance_convention = detect_convention(rows, opening)
+        resign_unsigned_rows(rows, statement.balance_convention, opening)
+
+        return statement
+
+    def _read(self, file_path: Path) -> list[RawTransaction]:
         text = self._extract_text(file_path)
         if self._is_interim(text):
             raw_entries = self._parse_interim_entries(text)
@@ -167,6 +225,8 @@ class INGPDFParser(BaseParser):
                 continue
 
             # Skip known non-transaction lines
+            if any(p.search(line) for p in NON_TRANSACTION_PATTERNS):
+                continue
             if any(p.match(line) for p in SKIP_PATTERNS):
                 continue
 
@@ -383,3 +443,46 @@ class INGPDFParser(BaseParser):
     def _clean_description(self, desc: str) -> str:
         desc = re.sub(r"\s+", " ", desc).strip()
         return desc
+
+
+SUMMARY_LABELS = ("Opening balance", "Total money in", "Total money out", "Closing balance")
+_MONEY_RE = re.compile(r"-?\$-?[\d,]+\.\d{2}")
+
+
+def summary_balances(text: str) -> tuple[float | None, float | None]:
+    """Opening and closing balance from ING's summary block.
+
+    ING prints the four labels and their four values in separate blocks -- either
+    all labels on one line or one per line -- so the values are read positionally
+    rather than by pairing each label with the next number on the page, which
+    would marry unrelated figures.
+
+    Returns (None, None) unless the whole block is present and complete: a
+    partial block is not worth guessing at, and a wrong opening balance would
+    make every statement fail validation for the wrong reason.
+    """
+    lines = text.splitlines()
+
+    for i, line in enumerate(lines):
+        if all(label in line for label in SUMMARY_LABELS):
+            values = _following_values(lines, i + 1)
+            return (values[0], values[3]) if values else (None, None)
+
+    for i in range(len(lines) - 3):
+        window = [lines[i + n].strip() for n in range(4)]
+        if all(window[n].startswith(SUMMARY_LABELS[n]) for n in range(4)):
+            values = _following_values(lines, i + 4)
+            return (values[0], values[3]) if values else (None, None)
+
+    return (None, None)
+
+
+def _following_values(lines: list[str], start: int) -> list[float] | None:
+    """The next four money figures at or after `start`, in printed order."""
+    found: list[float] = []
+    for line in lines[start:start + 8]:
+        for match in _MONEY_RE.findall(line):
+            found.append(float(match.replace("$", "").replace(",", "")))
+            if len(found) == 4:
+                return found
+    return None

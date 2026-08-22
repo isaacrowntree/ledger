@@ -3,8 +3,10 @@ from pathlib import Path
 
 import pdfplumber
 
+from etl.contract import BalanceConvention, ParsedRow, ParsedStatement
 from etl.models import RawTransaction
-from etl.parsers.base import BaseParser
+from etl.parsers.dates import StatementPeriod, parse_period, resolve_year
+from etl.parsers.base import BaseParser, chronological, labelled_balance, money
 
 MONTH_MAP = {
     "Jan": "01", "Feb": "02", "Mar": "03", "Apr": "04",
@@ -63,12 +65,35 @@ class ColesCreditPDFParser(BaseParser):
 
     source_type = "coles"
 
-    def parse(self, file_path: Path) -> list[RawTransaction]:
+    # A credit card statement quotes what is OWED: spending makes it rise.
+    balance_convention = BalanceConvention.OWING
+
+    def parse_statement(self, file_path: Path) -> ParsedStatement:
+        transactions = chronological(self._read(file_path))
+        text = self._extract_text(file_path)
+        rows = [
+            ParsedRow(index=i, date=t.date, description=t.description,
+                      amount=t.amount, raw=t.raw_data or {}, currency=t.currency,
+                      original_amount=t.original_amount,
+                      original_currency=t.original_currency, fee=t.fee,
+                      reference_id=t.reference_id)
+            for i, t in enumerate(transactions)
+        ]
+        opening = labelled_balance(text, "Opening [Bb]alance")
+        if opening is None:
+            opening = summary_opening_balance(text)
+        return self.build(
+            file_path, rows,
+            opening_balance=opening,
+            closing_balance=labelled_balance(text, "Closing [Bb]alance"),
+        )
+
+    def _read(self, file_path: Path) -> list[RawTransaction]:
         text = self._extract_text(file_path)
         statement_year = self._detect_year(text)
-        statement_end_month = self._detect_end_month(text)
+        statement_period = parse_period(text)
         closing_balance = self._extract_closing_balance(text)
-        entries = self._parse_entries(text, statement_year, statement_end_month)
+        entries = self._parse_entries(text, statement_year, statement_period)
 
         transactions = []
         for entry in entries:
@@ -141,7 +166,7 @@ class ColesCreditPDFParser(BaseParser):
             return int(MONTH_MAP[m.group(1)[:3].title()])
         return None
 
-    def _parse_entries(self, text: str, year: str, end_month: int | None = None) -> list[dict]:
+    def _parse_entries(self, text: str, year: str, period: StatementPeriod | None = None) -> list[dict]:
         lines = text.split("\n")
         entries = []
         current = None
@@ -194,7 +219,7 @@ class ColesCreditPDFParser(BaseParser):
 
                 amount, is_credit, desc = self._extract_amount(rest)
                 current = {
-                    "date": self._normalize_date(date_str, year, end_month),
+                    "date": self._normalize_date(date_str, year, period),
                     "description": desc,
                     "amount": amount,
                     "is_credit": is_credit,
@@ -285,13 +310,16 @@ class ColesCreditPDFParser(BaseParser):
             },
         )
 
-    def _normalize_date(self, date_str: str, default_year: str, end_month: int | None = None) -> str:
-        def infer_year(month: str) -> str:
-            # Year-rollover: on a statement ending in e.g. January, a December
-            # transaction belongs to the previous year.
-            if end_month and int(month) > end_month:
-                return str(int(default_year) - 1)
-            return default_year
+    def _normalize_date(self, date_str: str, default_year: str, period: StatementPeriod | None = None) -> str:
+        def infer_year(day: str, month: str) -> str:
+            """The year that places this day/month inside the statement period.
+
+            The previous rule compared the month against the statement's end
+            month, which mis-assigned any period spanning a month boundary
+            mid-year and put transactions in the wrong FINANCIAL year.
+            """
+            resolved = resolve_year(int(day), int(month), period)
+            return str(resolved) if resolved else default_year
 
         # DD Mon YYYY
         m = re.match(r"(\d{1,2})\s+(\w{3})\s+(\d{2,4})", date_str)
@@ -311,7 +339,7 @@ class ColesCreditPDFParser(BaseParser):
             month = MONTH_MAP.get(mon, "")
             if not month:
                 return ""
-            return f"{infer_year(month)}-{month}-{day.zfill(2)}"
+            return f"{infer_year(day, month)}-{month}-{day.zfill(2)}"
 
         # Mon DD (old Coles format, e.g. "Dec 13")
         m = re.match(r"(\w{3})\s+(\d{1,2})", date_str)
@@ -320,7 +348,7 @@ class ColesCreditPDFParser(BaseParser):
             month = MONTH_MAP.get(mon, "")
             if not month:
                 return ""
-            return f"{infer_year(month)}-{month}-{day.zfill(2)}"
+            return f"{infer_year(day, month)}-{month}-{day.zfill(2)}"
 
         # DD/MM/YYYY
         m = re.match(r"(\d{1,2})/(\d{2})/(\d{2,4})", date_str)
@@ -337,3 +365,29 @@ class ColesCreditPDFParser(BaseParser):
             return f"{default_year}-{month}-{day.zfill(2)}"
 
         return ""
+
+
+_SUMMARY_HEADER_RE = re.compile(r"Credit Limit\s+Opening\b", re.I)
+_SUMMARY_MONEY_RE = re.compile(r"\$-?[\d,]+\.\d{2}")
+
+
+def summary_opening_balance(text: str) -> float | None:
+    """Opening balance from the Account Summary table.
+
+    The table prints a two-line header and then a row of values, so the opening
+    balance is read positionally -- it is the second figure, after the credit
+    limit. Without it no Coles statement can be checked against its own
+    arithmetic, and one with no transactions cannot be told from a failed parse.
+    """
+    lines = text.splitlines()
+    for i, line in enumerate(lines):
+        if not _SUMMARY_HEADER_RE.search(line):
+            continue
+        # The header wraps over several lines ("Balance Balance Balance^ ...",
+        # "to maintain", "interest free days") before the values appear.
+        for candidate in lines[i + 1:i + 9]:
+            values = _SUMMARY_MONEY_RE.findall(candidate)
+            if len(values) >= 2:
+                return float(values[1].replace("$", "").replace(",", ""))
+        return None
+    return None

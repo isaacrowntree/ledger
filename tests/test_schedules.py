@@ -103,7 +103,7 @@ class TestComputeSchedule:
     def test_payments_reconciled(self, conn, config):
         sched = config["schedules"][0]
         # Three fortnights due by 30 Jun (1, 15, 29 Jun) = 3 * 471.12 expected
-        _add_payment(conn, "2026-06-02", 471.12, tag="silvana-rent")
+        _add_payment(conn, "2026-06-02", 471.12, tag="partner-rent")
         # An untagged transfer must NOT count
         _add_payment(conn, "2026-06-03", 471.12, tag=None)
         result = compute_schedule(conn, sched, date(2026, 6, 30))
@@ -115,7 +115,7 @@ class TestComputeSchedule:
 
     def test_payment_before_start_excluded(self, conn, config):
         sched = config["schedules"][0]
-        _add_payment(conn, "2026-05-20", 471.12, tag="silvana-rent")
+        _add_payment(conn, "2026-05-20", 471.12, tag="partner-rent")
         result = compute_schedule(conn, sched, date(2026, 6, 14))
         assert result["paid"] == 0.0
 

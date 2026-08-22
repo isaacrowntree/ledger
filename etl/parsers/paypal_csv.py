@@ -2,8 +2,9 @@ import csv
 from collections import defaultdict
 from pathlib import Path
 
+from etl.contract import BalanceConvention, ParsedRow, ParsedStatement
 from etl.models import RawTransaction
-from etl.parsers.base import BaseParser
+from etl.parsers.base import BaseParser, chronological, money
 
 
 class PayPalCSVParser(BaseParser):
@@ -24,6 +25,28 @@ class PayPalCSVParser(BaseParser):
 
     source_type = "paypal"
 
+    balance_convention = BalanceConvention.NONE
+
+    def parse_statement(self, file_path: Path) -> ParsedStatement:
+        transactions = chronological(self._read(file_path))
+        rows = [
+            ParsedRow(
+                index=i,
+                date=t.date,
+                description=t.description,
+                amount=t.amount,
+                balance=None,
+                raw=t.raw_data or {},
+                currency=t.currency,
+                original_amount=t.original_amount,
+                original_currency=t.original_currency,
+                fee=t.fee,
+                reference_id=t.reference_id,
+            )
+            for i, t in enumerate(transactions)
+        ]
+        return self.build(file_path, rows)
+
     CONVERSION_TYPES = {
         "General Currency Conversion",
         "General currency conversion",
@@ -37,7 +60,7 @@ class PayPalCSVParser(BaseParser):
         "General Authorization",
     }
 
-    def parse(self, file_path: Path) -> list[RawTransaction]:
+    def _read(self, file_path: Path) -> list[RawTransaction]:
         rows = self._read_csv(file_path)
 
         # Normalize column names across formats

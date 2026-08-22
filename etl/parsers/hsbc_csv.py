@@ -1,9 +1,21 @@
-"""Parse Bankwest CSV transaction exports.
+"""Parse HSBC Australia credit card CSV exports ("TransHist.csv" from online banking).
 
-Format: BSB Number,Account Number,Transaction Date,Narration,Cheque Number,Debit,Credit,Balance,Transaction Type
-Dates: DD/MM/YYYY
+Format: " Transaction Date ,Posting Date,Description,Amount,"
+Dates: "DD Mon YYYY" (e.g. " 22 Aug 2026"), leading/trailing spaces on every field.
+Posting Date is often blank for transactions that have not settled yet.
+
+Sign convention matches HSBC's credit card PDF statements: purchases are positive
+in the file and payments negative ("BPAY PAYMENT  -4,267.00"), which is the inverse
+of Ledger's convention, so amounts are negated on the way in -- the same flip
+HSBCPDFParser applies for the single-Amount credit card layout.
+
+Reports source_type "hsbc" so its rows sit in the same account as the PDF parser.
+Note the two formats describe the same transaction differently (the PDF prefixes a
+card number and appends "$"), so they cannot dedup against each other -- ingest one
+format per period, clipping with `ledger ingest --from/--until` at the boundary.
 """
 import csv
+from datetime import datetime
 from pathlib import Path
 
 from etl.contract import BalanceConvention, ParsedRow, ParsedStatement
@@ -11,13 +23,12 @@ from etl.models import RawTransaction
 from etl.parsers.base import BaseParser, chronological, money
 
 
-class BankwestCSVParser(BaseParser):
-    source_type = "bankwest"
+class HSBCCSVParser(BaseParser):
+    source_type = "hsbc"
 
-    balance_convention = BalanceConvention.SIGNED
+    balance_convention = BalanceConvention.NONE
 
     def parse_statement(self, file_path: Path) -> ParsedStatement:
-        # These exports list the newest transaction first.
         transactions = chronological(self._read(file_path))
         rows = [
             ParsedRow(
@@ -25,7 +36,7 @@ class BankwestCSVParser(BaseParser):
                 date=t.date,
                 description=t.description,
                 amount=t.amount,
-                balance=money((t.raw_data or {}).get("Balance")),
+                balance=None,
                 raw=t.raw_data or {},
                 currency=t.currency,
                 original_amount=t.original_amount,
@@ -35,13 +46,13 @@ class BankwestCSVParser(BaseParser):
             )
             for i, t in enumerate(transactions)
         ]
-        return self.build(file_path, rows,
-                          closing_balance=rows[-1].balance if rows else None)
+        return self.build(file_path, rows)
 
     def _read(self, file_path: Path) -> list[RawTransaction]:
         transactions = []
         with open(file_path, newline="", encoding="utf-8-sig") as f:
             reader = csv.DictReader(f)
+            reader.fieldnames = [(name or "").strip() for name in (reader.fieldnames or [])]
             for row in reader:
                 txn = self._build_transaction(row, file_path)
                 if txn:
@@ -49,32 +60,26 @@ class BankwestCSVParser(BaseParser):
         return transactions
 
     def _build_transaction(self, row: dict, file_path: Path) -> RawTransaction | None:
+        row = {(k or "").strip(): (v or "").strip() for k, v in row.items() if k is not None}
+
         date = self._parse_date(row.get("Transaction Date", ""))
         if not date:
             return None
 
-        description = row.get("Narration", "").strip()
+        description = row.get("Description", "")
+        # HSBC pads descriptions out to fixed columns; collapse the runs of spaces.
+        description = " ".join(description.split())
         if not description:
             return None
 
-        # Skip pending charges — they often re-post with different details/amounts
-        if description.startswith("AUTHORISATION ONLY"):
-            return None
-
-        debit = self._parse_amount(row.get("Debit", ""))
-        credit = self._parse_amount(row.get("Credit", ""))
-
-        if debit:
-            amount = -abs(debit)
-        elif credit:
-            amount = credit
-        else:
+        amount = self._parse_amount(row.get("Amount", ""))
+        if amount is None:
             return None
 
         return RawTransaction(
             date=date,
             description=description,
-            amount=amount,
+            amount=-amount,  # purchases positive in the file, negative in the ledger
             currency="AUD",
             source_type=self.source_type,
             source_file=str(file_path),
@@ -82,17 +87,18 @@ class BankwestCSVParser(BaseParser):
         )
 
     def _parse_date(self, s: str) -> str:
-        s = s.strip()
+        s = (s or "").strip()
         if not s:
             return ""
-        parts = s.split("/")
-        if len(parts) == 3:
-            day, month, year = parts
-            return f"{year}-{month.zfill(2)}-{day.zfill(2)}"
+        for fmt in ("%d %b %Y", "%d %B %Y", "%d %b %y", "%d %B %y"):
+            try:
+                return datetime.strptime(s, fmt).strftime("%Y-%m-%d")
+            except ValueError:
+                continue
         return ""
 
     def _parse_amount(self, s: str) -> float | None:
-        s = s.strip().replace(",", "").replace("$", "")
+        s = (s or "").strip().replace(",", "").replace("$", "")
         if not s:
             return None
         try:
