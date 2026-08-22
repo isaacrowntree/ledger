@@ -50,3 +50,6 @@ bankwest_txn_view.png
 # Astro build outputs
 docs/.astro/
 docs/dist/
+
+# Local tax review notes (may reference financial specifics)
+notes/

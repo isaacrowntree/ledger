@@ -195,13 +195,104 @@ PDF parsing is trickier than CSV because:
 
 Look at `etl/parsers/ing_pdf.py`, `etl/parsers/hsbc_pdf.py`, or `etl/parsers/coles_pdf.py` for real-world examples.
 
-## Tips for dedup hashing
+## The principle: the statement is the oracle
 
-The default dedup hash uses `date|description|amount`. This works for most banks but can collide if you have two identical transactions on the same day (e.g. two $5.00 coffees at the same cafe).
+Every parser bug found in this codebase came from the parser *guessing* at
+something the statement already stated:
 
-If your bank provides a unique transaction ID, set `reference_id` on the `RawTransaction` and the normalizer will use it for hashing instead.
+| Guessed | Consequence | Resolved instead by |
+|---------|-------------|---------------------|
+| Year, from the statement's end month | Transactions in the wrong **financial year** | The printed statement period |
+| Credit vs charge, from description keywords | Credits booked as spending | The Debit/Credit **column position** |
+| Sign of an unsigned amount | Mortgage interest recorded as reducing the debt | The **running balance** movement |
+| Which way balances point, from product wording | A transaction account read as a mortgage, inverting every amount | Counting which convention the balances follow |
+| That an empty parse means failure | Dormant statements reported as broken | The statement's own opening/closing |
+| That rows are chronological | Value-dated rows flagged as disordered | The balance chain vouching for the order |
 
-For banks with multiple accounts in the same format (like ING), include the source filename in the hash -- see `compute_dedup_hash()` in `etl/normalizer.py`.
+So the rule for a new parser: **never infer from prose what the numbers already
+say.** A statement prints its period, its opening and closing balances, and often
+a running balance. Those are ground truth, they are internally consistent, and the
+engine checks them on every ingest. Anything derived from them is verifiable;
+anything guessed from wording is not.
+
+The shared toolkit exists for exactly this:
+
+| Helper | Resolves |
+|--------|----------|
+| `dates.parse_period` / `dates.resolve_year` | The year a line omits |
+| `base.labelled_balance` | A balance beside its label, honouring `CR` |
+| `base.detect_convention` | Whether balances move with or against amounts |
+| `base.resign_unsigned_rows` | The sign of an amount printed without one |
+| `base.chronological` | Newest-first exports, and section-grouped rows |
+
+`resign_unsigned_rows` only ever changes a sign, never a magnitude. Deriving
+amounts from balances would make validation tautological and hide the dropped rows
+it exists to catch.
+
+## The parser contract
+
+A parser has one job: describe faithfully what a statement says. It does not decide
+what makes a transaction unique, whether a file was fully captured, or how to
+handle a re-download -- the engine owns all of that, once, for every source.
+
+Implement a single entry point:
+
+```python
+class MyBankPDFParser(BaseParser):
+    source_type = "mybank"
+    balance_convention = BalanceConvention.OWING   # or SIGNED, or NONE
+
+    def parse_statement(self, file_path: Path) -> ParsedStatement:
+        rows = [...]                                # chronological, indexed from 0
+        return self.build(file_path, rows,
+                          opening_balance=..., closing_balance=...)
+```
+
+What you must get right:
+
+| Field | Why it matters |
+|-------|----------------|
+| `balance_convention` | `SIGNED` if the balance moves with the amount, `OWING` if it is a debt that grows as you spend, `NONE` if the source prints no balance. Must be stated -- guessing is what stored years of mortgage interest with the wrong sign. |
+| chronological rows | A running balance only reads forwards. Several banks export newest-first; call `chronological()` on them. |
+| `opening_balance` / `closing_balance` | These let the engine prove at ingest time that no row was dropped. Supply them whenever the statement prints them. |
+| `reference_id` | If the source gives each transaction a unique id, set it -- it is the strongest identity available. |
+
+Anything the statement prints that is not a transaction -- a rate-change notice, a
+summary line -- must be excluded. Left in, its number is read as an amount and
+becomes a phantom transaction that breaks the balance chain.
+
+## Validation
+
+`ledger ingest` refuses a statement whose rows do not account for its own printed
+balances, rather than ingesting it partially:
+
+```
+  ! balance_mismatch: rows sum to -1,234.56 but opening 1,000.00 -> closing 2,204.58 implies -1,204.58 (-29.98)
+  REFUSED -- statement does not account for its own printed balances; nothing was ingested.
+```
+
+That is a parser bug in almost every case. `--force` overrides it deliberately and
+still reports the discrepancy.
+
+## Identity and idempotency
+
+The engine derives the dedup key in `etl/engine.py:row_identity()` from intrinsic
+fields only: account, source type, date, description, amount, the running balance
+where printed, and the row's position among identical rows in its own file. The
+filename is deliberately excluded, so the same statement re-downloaded under
+another name does not double-count. A statement-level figure such as a closing
+balance is also excluded, because it identifies the file rather than the row.
+
+The occurrence index is what allows two genuinely identical transactions on one
+day -- two identical tolls, say -- to both be stored, on a source that prints no
+running balance to tell them apart.
+
+## Testing a new parser
+
+Add real statements to `data/archive/<source>/`. `tests/test_statement_corpus.py`
+picks them up automatically and holds every one to the contract. Hand-written
+fixtures are useful for edge cases, but they encode the layout you already handle
+-- the archive is what catches the layout you do not.
 
 ## Adding category rules
 

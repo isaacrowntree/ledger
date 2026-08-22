@@ -4,9 +4,13 @@ import sys
 from pathlib import Path
 
 from etl import db
+from etl.models import RawTransaction
 from etl.categorizer import Categorizer
 from etl.currency import extract_fx_rates
-from etl.normalizer import normalize_and_insert, load_payment_patterns
+from etl.engine import as_raw_transaction, ingest_statement
+from etl.shared import SharedRules, mark_shared
+from etl.normalizer import load_payment_patterns
+from etl.reconcile import reconcile_account
 from etl.tagger import Tagger
 from etl.parsers.airbnb_csv import AirbnbCSVParser
 from etl.parsers.amex_csv import AmexCSVParser
@@ -15,6 +19,7 @@ from etl.parsers.bankwest_pdf import BankwestPDFParser
 from etl.parsers.coles_csv import ColesCSVParser
 from etl.parsers.coles_pdf import ColesCreditPDFParser
 from etl.parsers.hsbc_pdf import HSBCPDFParser
+from etl.parsers.hsbc_csv import HSBCCSVParser
 from etl.parsers.ing_csv import INGCSVParser
 from etl.parsers.ing_pdf import INGPDFParser
 from etl.parsers.paypal_csv import PayPalCSVParser
@@ -34,6 +39,7 @@ PARSERS = {
     "ing": (INGPDFParser, "ing", "*.pdf"),
     "ing-csv": (INGCSVParser, "ing-csv", "*.csv"),
     "hsbc": (HSBCPDFParser, "hsbc", "*.pdf"),
+    "hsbc-csv": (HSBCCSVParser, "hsbc-csv", "*.csv"),
     "coles": (ColesCreditPDFParser, "coles", "*.pdf"),
     "coles-csv": (ColesCSVParser, "coles-csv", "*.csv"),
     "bankwest": (BankwestPDFParser, "bankwest", "*.pdf"),
@@ -48,6 +54,7 @@ ACCOUNT_NAMES = {
     "ing-csv": "ING Orange Everyday",
     "airbnb": "Airbnb",
     "hsbc": "HSBC",
+    "hsbc-csv": "HSBC",
     "coles": "Coles Credit Card",
     "coles-csv": "Coles Credit Card",
     "bankwest": "Bankwest",
@@ -83,6 +90,12 @@ def main():
     ingest_parser = sub.add_parser("ingest", help="Ingest files from staging/")
     ingest_parser.add_argument("--source", choices=list(PARSERS.keys()), help="Only ingest from this source")
     ingest_parser.add_argument("--dry-run", action="store_true", help="Preview without writing to DB")
+    ingest_parser.add_argument("--from", dest="date_from", metavar="YYYY-MM-DD",
+                               help="Only ingest transactions on or after this date")
+    ingest_parser.add_argument("--until", dest="date_until", metavar="YYYY-MM-DD",
+                               help="Only ingest transactions on or before this date")
+    ingest_parser.add_argument("--force", action="store_true",
+                               help="Ingest even if a statement fails validation")
 
     sub.add_parser("init", help="Initialize database and load config")
 
@@ -92,6 +105,22 @@ def main():
 
     tax_parser = sub.add_parser("tax", help="Show ATO tax summary")
     tax_parser.add_argument("--fy", type=int, help="Financial year (e.g. 2025 for FY 2024-25)")
+
+    shared_parser = sub.add_parser(
+        "shared", help="Apply shared-expense rules to existing transactions")
+    shared_parser.add_argument("--backfill", action="store_true",
+                               help="Mark matching transactions not already shared")
+    shared_parser.add_argument("--since", metavar="YYYY-MM-DD",
+                               help="Only consider transactions from this date")
+    shared_parser.add_argument("--dry-run", action="store_true",
+                               help="Show what would be marked without writing")
+
+    rec_parser = sub.add_parser("reconcile", help="Check ledger balances against statement closing balances")
+    rec_parser.add_argument("--account", help="Only this account (substring match on name)")
+    rec_parser.add_argument("--since", metavar="YYYY-MM-DD", help="Only consider statements from this date")
+    rec_parser.add_argument("--no-chain", action="store_true",
+                            help="Skip the per-record running balance check")
+    rec_parser.add_argument("--verbose", action="store_true", help="List every statement anchor")
 
     dedup_parser = sub.add_parser("dedup", help="Find and resolve cross-account duplicate transactions")
     dedup_parser.add_argument("--dry-run", action="store_true", help="Preview without writing to DB")
@@ -111,11 +140,18 @@ def main():
     if args.command == "init":
         cmd_init()
     elif args.command == "ingest":
-        cmd_ingest(source=args.source, dry_run=args.dry_run)
+        cmd_ingest(source=args.source, dry_run=args.dry_run,
+                   date_from=args.date_from, date_until=args.date_until,
+                   force=args.force)
     elif args.command == "split":
         cmd_split(backfill=args.backfill, fy=args.fy)
     elif args.command == "tax":
         cmd_tax(fy=args.fy)
+    elif args.command == "shared":
+        cmd_shared(backfill=args.backfill, since=args.since, dry_run=args.dry_run)
+    elif args.command == "reconcile":
+        cmd_reconcile(account=args.account, since=args.since,
+                      chain=not args.no_chain, verbose=args.verbose)
     elif args.command == "dedup":
         cmd_dedup(dry_run=args.dry_run)
     elif args.command == "tag":
@@ -139,7 +175,17 @@ def cmd_init():
     print("Database initialized and config loaded.")
 
 
-def cmd_ingest(source: str | None = None, dry_run: bool = False):
+def cmd_ingest(source: str | None = None, dry_run: bool = False,
+               date_from: str | None = None, date_until: str | None = None,
+               force: bool = False):
+    """Ingest staged statements.
+
+    date_from/date_until clip each file to a date window before inserting. Use
+    this to stitch formats that overlap in time: a bank's PDF and CSV exports
+    describe the same transaction with different text and often a different date
+    basis (transaction vs posting date), so they cannot dedup against each other
+    -- ingest one format per period and clip at the boundary instead.
+    """
     conn = db.get_connection()
     db.init_db(conn)
     db.load_categories_from_config(conn, CONFIG_DIR / "categories.yaml")
@@ -147,12 +193,14 @@ def cmd_ingest(source: str | None = None, dry_run: bool = False):
 
     categorizer = Categorizer(conn, CONFIG_DIR / "categories.yaml")
     tagger = Tagger(CONFIG_DIR / "categories.yaml")
+    shared_rules = SharedRules(CONFIG_DIR / "categories.yaml")
     prefix_map = _build_file_prefix_map(CONFIG_DIR / "accounts.yaml")
     payment_patterns, sot_types = load_payment_patterns(CONFIG_DIR / "accounts.yaml")
 
     sources_to_process = [source] if source else list(PARSERS.keys())
     total_inserted = 0
     total_skipped = 0
+    total_rejected = 0
 
     for src in sources_to_process:
         if src not in PARSERS:
@@ -175,32 +223,176 @@ def cmd_ingest(source: str | None = None, dry_run: bool = False):
             account_id = db.ensure_account(conn, account_name, src)
 
             print(f"\nProcessing: {file_path.name} → {account_name}")
-            transactions = parser.parse(file_path)
-            print(f"  Parsed {len(transactions)} transactions")
+            statement = parser.parse_statement(file_path)
+            print(f"  Parsed {len(statement.rows)} transactions"
+                  f" [{statement.balance_convention.value}]")
 
-            # Extract FX rates before normalization
-            extract_fx_rates(transactions, conn)
+            extract_fx_rates(_fx_candidates(statement), conn)
 
-            inserted, skipped = normalize_and_insert(
-                conn, transactions, account_id, categorizer,
+            result = ingest_statement(
+                conn, statement, account_id, categorizer,
                 payment_patterns=payment_patterns, source_of_truth_types=sot_types,
-                tagger=tagger, dry_run=dry_run,
+                tagger=tagger, shared_rules=shared_rules,
+                dry_run=dry_run, force=force,
+                date_from=date_from, date_until=date_until,
             )
-            total_inserted += inserted
-            total_skipped += skipped
-            print(f"  Inserted: {inserted}, Skipped (duplicates): {skipped}")
 
-            # Move file to archive (unless dry run)
-            if not dry_run:
+            for issue in result.issues:
+                print(f"  ! {issue}")
+
+            if result.rejected:
+                print("  REFUSED -- statement does not account for its own printed "
+                      "balances; nothing was ingested. Re-run with --force to override.")
+                total_rejected += 1
+                continue
+
+            if result.dropped_by_window:
+                window = f"{date_from or '...'} to {date_until or '...'}"
+                print(f"  Window {window}: dropped {result.dropped_by_window}")
+
+            total_inserted += result.inserted
+            total_skipped += result.skipped
+            print(f"  Inserted: {result.inserted}, Skipped (duplicates): {result.skipped}")
+
+            # Move file to archive (unless dry run, or a windowed partial import --
+            # the file still holds transactions outside the window)
+            if not dry_run and not (date_from or date_until):
                 archive_dest = ARCHIVE_DIR / staging_subdir
                 archive_dest.mkdir(parents=True, exist_ok=True)
                 shutil.move(str(file_path), str(archive_dest / file_path.name))
                 print(f"  Archived to: {archive_dest / file_path.name}")
+            elif not dry_run:
+                print("  Left in staging (windowed import)")
 
     conn.commit()
     conn.close()
 
-    print(f"\nDone. Total inserted: {total_inserted}, Total skipped: {total_skipped}")
+    summary = f"\nDone. Total inserted: {total_inserted}, Total skipped: {total_skipped}"
+    if total_rejected:
+        summary += f", REFUSED: {total_rejected} statement(s)"
+    print(summary)
+
+
+def _fx_candidates(statement):
+    """Statement rows in the shape the FX rate extractor reads."""
+    return [as_raw_transaction(statement, row) for row in statement.rows]
+
+
+def cmd_shared(backfill: bool = False, since: str | None = None, dry_run: bool = False):
+    """Apply the shared-expense rules to transactions already in the ledger.
+
+    Existing entries are never touched -- a transaction already marked (or
+    deliberately left unmarked at a different split) represents a decision, and a
+    rule must not overwrite it. This only fills in what the rules would have
+    marked at ingest.
+    """
+    conn = db.get_connection()
+    rules = SharedRules(CONFIG_DIR / "categories.yaml")
+    if not rules.rules:
+        print("No shared_rules configured in config/categories.yaml")
+        conn.close()
+        return
+
+    sql = """
+        SELECT t.id, t.date, t.description, t.amount, a.name AS account
+        FROM transactions t JOIN accounts a ON a.id = t.account_id
+        WHERE NOT EXISTS (SELECT 1 FROM shared_expenses se WHERE se.transaction_id = t.id)
+    """
+    params: list = []
+    if since:
+        sql += " AND t.date >= ?"
+        params.append(since)
+    sql += " ORDER BY t.date"
+
+    marked = 0
+    total_share = 0.0
+    for row in conn.execute(sql, params).fetchall():
+        txn = RawTransaction(date=row["date"], description=row["description"],
+                             amount=row["amount"])
+        split_pct = rules.split_for(txn)
+        if split_pct is None:
+            continue
+        share = abs(row["amount"]) * split_pct / 100.0
+        total_share += share
+        marked += 1
+        print(f"  {row['date']}  {row['description'][:44]:46s} "
+              f"{row['amount']:>10,.2f}  {split_pct:g}% -> {share:,.2f}")
+        if backfill and not dry_run:
+            mark_shared(conn, row["id"], split_pct)
+
+    if backfill and not dry_run:
+        conn.commit()
+        print(f"\nMarked {marked} transaction(s) as shared; share {total_share:,.2f}")
+    else:
+        print(f"\n{marked} transaction(s) would be marked; share {total_share:,.2f}"
+              f"{'' if backfill else '  (use --backfill to write)'}")
+    conn.close()
+
+
+def cmd_reconcile(account: str | None = None, since: str | None = None,
+                  chain: bool = True, verbose: bool = False):
+    """Reconcile each account against the closing balances printed on its statements."""
+    conn = db.get_connection()
+
+    sql = "SELECT id, name, account_type FROM accounts"
+    params: list = []
+    if account:
+        sql += " WHERE name LIKE ?"
+        params.append(f"%{account}%")
+    sql += " ORDER BY name"
+    accounts = conn.execute(sql, params).fetchall()
+
+    total_drifts = 0
+    total_breaks = 0
+    clean = []
+
+    for account_id, name, account_type in accounts:
+        report = reconcile_account(conn, account_id, name, account_type, since=since, chain=chain)
+        if not report.anchors:
+            continue
+
+        issues = report.anchor_drifts or report.chain_breaks
+        if not issues and not verbose:
+            clean.append(f"{name} ({len(report.anchors)} statements)")
+            continue
+
+        print(f"\n{name}  [{account_type}]  {len(report.anchors)} statement anchors")
+
+        if verbose:
+            for a in report.anchors:
+                print(f"    {a.period_end}  {a.closing_balance:>12,.2f}  {Path(a.source_file).name}")
+
+        for d in report.anchor_drifts:
+            total_drifts += 1
+            # drift = ledger - statements. Positive means the ledger records more
+            # money coming in (or less going out) than the statements account for.
+            direction = ("spending missing, or credits duplicated" if d.drift > 0
+                         else "spending duplicated, or credits missing")
+            print(f"  ! {d.from_date} -> {d.to_date}  ({d.n_transactions} txns)")
+            print(f"      statements imply {d.expected_delta:>12,.2f}")
+            print(f"      ledger holds     {d.actual_delta:>12,.2f}")
+            print(f"      drift            {d.drift:>12,.2f}   <- {direction} transactions")
+            print(f"      between {Path(d.from_file).name}")
+            print(f"          and {Path(d.to_file).name}")
+
+        for b in report.chain_breaks:
+            total_breaks += 1
+            print(f"  ! chain break {b.date} {b.description[:40]!r} amount {b.amount:,.2f}")
+            print(f"      balance went {b.prev_balance:,.2f} -> {b.balance:,.2f}, off by {b.drift:,.2f}")
+            print(f"      in {Path(b.source_file).name}")
+
+        if report.unanchored_from:
+            n = conn.execute("SELECT COUNT(*) FROM transactions WHERE account_id = ? AND date > ?",
+                             (account_id, report.unanchored_from)).fetchone()[0]
+            print(f"  . {n} transactions after the last statement ({report.unanchored_from}) -- not yet verifiable")
+
+    if clean:
+        print("\nReconciled clean:")
+        for line in clean:
+            print(f"  OK  {line}")
+
+    print(f"\n{total_drifts} statement-gap drift(s), {total_breaks} running-balance break(s).")
+    conn.close()
 
 
 def cmd_dedup(dry_run: bool = False):

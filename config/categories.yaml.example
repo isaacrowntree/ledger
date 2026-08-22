@@ -278,3 +278,19 @@ tag_rules:
   # Tax
   - tag: tax
     pattern: "ATO PAYMENT|AUSTRALIAN TAXATION|\\bATO ATO\\d"
+
+# --- Shared expenses (split with a partner) ---
+# Marked automatically at ingest. Inclusion follows the MERCHANT, not the
+# category: Optus is a utility that has never been shared, and fuel is shared on
+# a road trip but not at the local servo -- so neither appears here.
+# A rule never overrides a manual decision, and `from:` keeps a new rule out of
+# periods already settled.
+shared_rules:
+  - pattern: "ORIGIN ENERGY|DODO POWER|SUPERLOOP|SYDNEY WATER"
+    split_pct: 50
+    exclude: "FORCE POST NO FUNDS|REVERSAL|DISHONOUR"
+  - pattern: "DEFT STRATA|BAYSIDE CNCL|BAYSIDE COUNCIL"
+    split_pct: 50
+  - pattern: "AAMI"
+    split_pct: 50
+    from: "2026-08-01"    # earlier premiums are settled and stay unshared

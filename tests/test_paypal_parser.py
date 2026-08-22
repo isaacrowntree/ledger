@@ -36,7 +36,7 @@ class TestPayPalBasicParsing:
         ]
         path = _write_csv(rows, ACTIVITY_HEADERS)
         parser = PayPalCSVParser()
-        txns = parser.parse(path)
+        txns = parser.parse_statement(path).rows
         assert len(txns) == 1
         assert txns[0].amount == -50.0
         assert txns[0].description == "Netflix"
@@ -53,7 +53,7 @@ class TestPayPalBasicParsing:
              "Bank Account": "", "Shipping and handling amount": "", "GST": "", "Invoice ID": ""},
         ]
         path = _write_csv(rows, ACTIVITY_HEADERS)
-        txns = PayPalCSVParser().parse(path)
+        txns = PayPalCSVParser().parse_statement(path).rows
         assert len(txns) == 1
         assert txns[0].amount == 200.0
         assert txns[0].fee == 5.0
@@ -81,7 +81,7 @@ class TestPayPalCurrencyConversion:
              "Bank Account": "", "Shipping and handling amount": "", "GST": "", "Invoice ID": ""},
         ]
         path = _write_csv(rows, ACTIVITY_HEADERS)
-        txns = PayPalCSVParser().parse(path)
+        txns = PayPalCSVParser().parse_statement(path).rows
         # Should collapse to 1 transaction
         assert len(txns) == 1
         assert txns[0].description == "Twilio"
@@ -101,7 +101,7 @@ class TestPayPalCurrencyConversion:
              "Shipping and handling amount": "", "GST": "", "Invoice ID": ""},
         ]
         path = _write_csv(rows, ACTIVITY_HEADERS)
-        txns = PayPalCSVParser().parse(path)
+        txns = PayPalCSVParser().parse_statement(path).rows
         assert len(txns) == 1
         assert txns[0].amount == 79.0  # Stored as-is (no AUD conversion available)
         assert txns[0].original_amount == 79.0
@@ -130,7 +130,7 @@ class TestPayPalConversionSkipping:
              "Bank Account": "", "Shipping and handling amount": "", "GST": "", "Invoice ID": ""},
         ]
         path = _write_csv(rows, ACTIVITY_HEADERS)
-        txns = PayPalCSVParser().parse(path)
+        txns = PayPalCSVParser().parse_statement(path).rows
         assert len(txns) == 1  # Only the parent, not conversion rows
         assert txns[0].amount == -30.0  # AUD
         path.unlink()
@@ -148,7 +148,7 @@ class TestPayPalTransferDetection:
              "GST": "", "Invoice ID": ""},
         ]
         path = _write_csv(rows, ACTIVITY_HEADERS)
-        txns = PayPalCSVParser().parse(path)
+        txns = PayPalCSVParser().parse_statement(path).rows
         assert len(txns) == 1
         assert txns[0].amount == 500.0
         path.unlink()
@@ -167,8 +167,8 @@ class TestPayPalIdempotency:
         path1 = _write_csv(rows, ACTIVITY_HEADERS)
         path2 = _write_csv(rows, ACTIVITY_HEADERS)
         parser = PayPalCSVParser()
-        txns1 = parser.parse(path1)
-        txns2 = parser.parse(path2)
+        txns1 = parser.parse_statement(path1).rows
+        txns2 = parser.parse_statement(path2).rows
         # Both parse the same transaction
         assert txns1[0].reference_id == txns2[0].reference_id
         path1.unlink()

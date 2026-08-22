@@ -8,13 +8,13 @@
 # Copy to config/schedules.yaml (gitignored) and edit with real values.
 
 schedules:
-  - name: Mortgage – Example St
+  - name: Mortgage – 1 Example St
     start: 2026-06-01
     frequency: fortnightly      # weekly | fortnightly | monthly
     amount: 1000.00             # full recurring amount (per occurrence)
     counterparty: Partner
     their_pct: 40               # the counterparty's share of each occurrence
-    notes: 60/40 split — Isaac pays the larger share
+    notes: 60/40 split — you pay the larger share
 
     # Optional: auto-reconcile what the counterparty has actually paid.
     # Incoming transactions (amount > 0) on/after `start` that match are summed

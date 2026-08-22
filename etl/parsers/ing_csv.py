@@ -7,14 +7,39 @@ Credit column = money in, Debit column = money out.
 import csv
 from pathlib import Path
 
+from etl.contract import BalanceConvention, ParsedRow, ParsedStatement
 from etl.models import RawTransaction
-from etl.parsers.base import BaseParser
+from etl.parsers.base import BaseParser, chronological, money
 
 
 class INGCSVParser(BaseParser):
     source_type = "ing"
 
-    def parse(self, file_path: Path) -> list[RawTransaction]:
+    balance_convention = BalanceConvention.SIGNED
+
+    def parse_statement(self, file_path: Path) -> ParsedStatement:
+        # These exports list the newest transaction first.
+        transactions = chronological(self._read(file_path))
+        rows = [
+            ParsedRow(
+                index=i,
+                date=t.date,
+                description=t.description,
+                amount=t.amount,
+                balance=money((t.raw_data or {}).get("Balance")),
+                raw=t.raw_data or {},
+                currency=t.currency,
+                original_amount=t.original_amount,
+                original_currency=t.original_currency,
+                fee=t.fee,
+                reference_id=t.reference_id,
+            )
+            for i, t in enumerate(transactions)
+        ]
+        return self.build(file_path, rows,
+                          closing_balance=rows[-1].balance if rows else None)
+
+    def _read(self, file_path: Path) -> list[RawTransaction]:
         transactions = []
         with open(file_path, newline="", encoding="utf-8-sig") as f:
             reader = csv.DictReader(f)

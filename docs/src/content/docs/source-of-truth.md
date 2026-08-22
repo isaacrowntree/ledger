@@ -73,8 +73,28 @@ The hash is computed in `etl/normalizer.py` in `compute_dedup_hash()`:
 | Source | Hash input |
 |--------|-----------|
 | PayPal | Transaction reference ID (unique per PayPal transaction) |
-| ING | `date|description|amount|source_file_stem` (includes filename to differentiate same-amount transfers between ING accounts) |
-| All others | `date|description|amount` |
+| Sources printing a running balance (ING) | `account_id|source_type|date|description|amount|balance` |
+| All others | `account_id|source_type|date|description|amount` |
+
+Every field is intrinsic to the transaction -- the source filename is deliberately
+**not** part of the hash. It used to be, which meant the same transaction arriving
+via a differently-named statement (a re-download, or two interim statements whose
+periods overlap) hashed differently and was inserted twice. `account_id` is what
+keeps same-amount transfers between two accounts distinct.
+
+The running balance is a tiebreaker, never the whole key. ING does not print a
+balance on every statement line, so the parser carries the previous one forward and
+two genuinely different transactions can share it -- on 2022-02-27 two $46 deposits
+from different people carried the same balance. Keyed on balance alone they would
+collapse into a single row.
+
+:::caution[Interim vs quarterly statements]
+ING describes the same purchase differently depending on statement format -- an
+interim statement says `SUPERMARKET/1-9 HIGH ST` where the quarterly says
+`Visa Purchase - Receipt 187224 WOOLWORTHS/... Card 8901`. Because description is
+part of the key, the two formats cannot dedup against each other. Ingest one format
+per period, or the overlap double-counts.
+:::
 
 The `dedup_hash` column in the `transactions` table has a `UNIQUE` constraint. If a hash already exists, the transaction is silently skipped during ingest.
 

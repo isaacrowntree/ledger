@@ -10,14 +10,37 @@ import csv
 from datetime import datetime
 from pathlib import Path
 
+from etl.contract import BalanceConvention, ParsedRow, ParsedStatement
 from etl.models import RawTransaction
-from etl.parsers.base import BaseParser
+from etl.parsers.base import BaseParser, chronological, money
 
 
 class ColesCSVParser(BaseParser):
     source_type = "coles"
 
-    def parse(self, file_path: Path) -> list[RawTransaction]:
+    balance_convention = BalanceConvention.NONE
+
+    def parse_statement(self, file_path: Path) -> ParsedStatement:
+        transactions = chronological(self._read(file_path))
+        rows = [
+            ParsedRow(
+                index=i,
+                date=t.date,
+                description=t.description,
+                amount=t.amount,
+                balance=None,
+                raw=t.raw_data or {},
+                currency=t.currency,
+                original_amount=t.original_amount,
+                original_currency=t.original_currency,
+                fee=t.fee,
+                reference_id=t.reference_id,
+            )
+            for i, t in enumerate(transactions)
+        ]
+        return self.build(file_path, rows)
+
+    def _read(self, file_path: Path) -> list[RawTransaction]:
         transactions = []
         with open(file_path, newline="", encoding="utf-8-sig") as f:
             reader = csv.DictReader(f)

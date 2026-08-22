@@ -3,8 +3,11 @@ from pathlib import Path
 
 import pdfplumber
 
+from etl.contract import BalanceConvention, ParsedRow, ParsedStatement
 from etl.models import RawTransaction
-from etl.parsers.base import BaseParser
+from etl.parsers.dates import StatementPeriod, parse_period, resolve_year
+from etl.parsers.base import (BaseParser, chronological, detect_convention,
+                              labelled_balance, money, resign_unsigned_rows)
 
 MONTH_MAP = {
     "Jan": "01", "Feb": "02", "Mar": "03", "Apr": "04",
@@ -42,6 +45,32 @@ AMOUNTS_1_RE = re.compile(
     r"(-?[\d,]+\.\d{2})\s*$"
 )
 
+# Credit card statements mark credits (payments, refunds) with a minus BEFORE the
+# dollar sign -- "7201 BPAY PAYMENT -$4,267.00" -- or with a trailing minus.
+# AMOUNTS_1_RE cannot see a minus across the "$", so credits are detected here.
+CREDIT_MARKER_RE = re.compile(
+    r"(?:-\s*\$\s*[\d,]+\.\d{2}|[\d,]+\.\d{2}\s*-)\s*$"
+)
+
+
+# Charges HSBC prints in the transaction list with NO date against them, e.g.
+# "OVERSEAS TRANSACTION FEE $6.86". They are real money and must be captured, or
+# the rows fall short of the statement's own closing balance. Matched by an
+# explicit whitelist of charge names, because the page carries plenty of other
+# dollar figures ("Minimum Payment $20.00") that are not transactions.
+UNDATED_CHARGE_RE = re.compile(
+    r"^((?:OVERSEAS TRANSACTION FEE|OVERSEAS ATM FEE|INTEREST ON PURCHASE(?:S)?|"
+    r"INTEREST ON CASH ADVANCE(?:S)?|INTEREST CHARGED|ANNUAL FEE|CARD FEE|"
+    r"LATE PAYMENT FEE|CASH ADVANCE FEE|OVERLIMIT FEE|OVER LIMIT FEE))"
+    r"\s+\$?([\d,]+\.\d{2})\s*$", re.I)
+
+
+# Promotional offers are printed as date-prefixed lines inside the statement --
+# "28 Sep 20 BALANCE TRANSFER 15 MONTHS 7.99% $4,000.00" -- and read as
+# transactions they become phantom rows that stop the statement adding up. A real
+# transaction line never quotes an interest rate.
+PROMOTIONAL_RE = re.compile(r"\d+\.\d{1,2}\s*%")
+
 
 class HSBCPDFParser(BaseParser):
     """
@@ -54,12 +83,55 @@ class HSBCPDFParser(BaseParser):
 
     source_type = "hsbc"
 
-    def parse(self, file_path: Path) -> list[RawTransaction]:
+    # A credit card statement quotes what is OWED: spending makes it rise.
+    balance_convention = BalanceConvention.OWING
+
+    def parse_statement(self, file_path: Path) -> ParsedStatement:
+        transactions = chronological(self._read(file_path))
         text = self._extract_text(file_path)
-        statement_year, statement_end_month = self._detect_year_and_end_month(text)
+        rows = [
+            ParsedRow(index=i, date=t.date, description=t.description,
+                      amount=t.amount, raw=t.raw_data or {}, currency=t.currency,
+                      original_amount=t.original_amount,
+                      original_currency=t.original_currency, fee=t.fee,
+                      reference_id=t.reference_id)
+            for i, t in enumerate(transactions)
+        ]
+        opening = labelled_balance(text, "Opening [Bb]alance")
+        closing = labelled_balance(text, "Closing [Bb]alance")
+        if opening is None or closing is None:
+            # The transaction-account layout prints its balances elsewhere.
+            account_opening, account_closing = account_statement_balances(text)
+            opening = opening if opening is not None else account_opening
+            closing = closing if closing is not None else account_closing
+
+        statement = self.build(file_path, rows,
+                               opening_balance=opening, closing_balance=closing)
+
+        # HSBC issues both credit cards (balance = what is owed) and day to day
+        # accounts (balance = what is there). Assuming one would invert every
+        # amount on the other, so the balances decide.
+        # A "Financial Statement" is a transaction account: its balance falls
+        # when money leaves. Anything else from HSBC is a credit card, whose
+        # balance is what is owed. Per-row balances, where printed, override.
+        # "BALANCE BROUGHT FORWARD" is what distinguishes a transaction account.
+        # Keying on a closing balance instead misread a CARD statement that
+        # prints "CLOSING BALANCE" inside its transaction list, handing it the
+        # wrong convention and inverting the whole statement.
+        is_transaction_account = _BROUGHT_FORWARD_RE.search(text) is not None
+        default = (BalanceConvention.SIGNED if is_transaction_account
+                   else BalanceConvention.OWING)
+        statement.balance_convention = detect_convention(rows, opening, default=default)
+        resign_unsigned_rows(rows, statement.balance_convention, opening)
+        return statement
+
+    def _read(self, file_path: Path) -> list[RawTransaction]:
+        text = self._extract_text(file_path)
+        statement_year, _ = self._detect_year_and_end_month(text)
+        statement_period = parse_period(text)
         has_balance_col = self._detect_balance_column(text)
         closing_balance = self._extract_closing_balance(text)
-        entries = self._parse_entries(text, statement_year, has_balance_col, statement_end_month)
+        entries = self._parse_entries(text, statement_year, has_balance_col, statement_period)
 
         transactions = []
         for entry in entries:
@@ -106,7 +178,7 @@ class HSBCPDFParser(BaseParser):
             return float(m.group(1).replace(",", ""))
         return None
 
-    def _parse_entries(self, text: str, year: str, has_balance_col: bool, end_month: int | None = None) -> list[dict]:
+    def _parse_entries(self, text: str, year: str, has_balance_col: bool, period: StatementPeriod | None = None) -> list[dict]:
         lines = text.split("\n")
         entries = []
         current = None
@@ -124,6 +196,27 @@ class HSBCPDFParser(BaseParser):
             ]):
                 continue
 
+            if PROMOTIONAL_RE.search(line):
+                continue
+
+            undated = UNDATED_CHARGE_RE.match(line)
+            if undated and not DATE_RE.match(line):
+                if current and current.get("amount") is not None:
+                    entries.append(current)
+                    current = None
+                # Attribute to the last dated transaction, or to the end of the
+                # statement period when the fee is printed before any.
+                when = entries[-1]["date"] if entries else (
+                    period.end if period else self._normalize_date("", year, period))
+                entries.append({
+                    "date": when,
+                    "description": undated.group(1).strip(),
+                    # A fee is a charge: negative, like any other purchase.
+                    "amount": -float(undated.group(2).replace(",", "")),
+                    "balance": None,
+                })
+                continue
+
             date_match = DATE_RE.match(line)
             if date_match:
                 if current and current.get("amount") is not None:
@@ -134,7 +227,7 @@ class HSBCPDFParser(BaseParser):
 
                 amount, balance, desc = self._extract_amounts(rest, has_balance_col)
                 current = {
-                    "date": self._normalize_date(date_str, year, end_month),
+                    "date": self._normalize_date(date_str, year, period),
                     "description": desc,
                     "amount": amount,
                     "balance": balance,
@@ -201,13 +294,17 @@ class HSBCPDFParser(BaseParser):
                     return -a_val, None, desc
                 return b_val, None, desc
 
-        # Try 1 amount (credit card format: purchases positive, payments negative)
-        # Negate so purchases become negative (expense) in our DB convention
+        # Try 1 amount (credit card format). Purchases print unsigned and become
+        # negative (expense) in our convention; credits are flagged by a minus
+        # before the "$" or a trailing minus, and stay positive.
         m = AMOUNTS_1_RE.search(text)
         if m:
             desc = text[:m.start()].strip()
             amount = self._parse_amount(m.group(1))
-            return -amount, None, desc
+            if amount is None:
+                return None, None, text
+            is_credit = bool(CREDIT_MARKER_RE.search(text))
+            return (abs(amount) if is_credit else -abs(amount)), None, desc
 
         return None, None, text
 
@@ -238,13 +335,16 @@ class HSBCPDFParser(BaseParser):
             },
         )
 
-    def _normalize_date(self, date_str: str, default_year: str, end_month: int | None = None) -> str:
-        def infer_year(month: str) -> str:
-            # Year-rollover: on a statement ending in e.g. January, a December
-            # transaction belongs to the previous year.
-            if end_month and int(month) > end_month:
-                return str(int(default_year) - 1)
-            return default_year
+    def _normalize_date(self, date_str: str, default_year: str, period: StatementPeriod | None = None) -> str:
+        def infer_year(day: str, month: str) -> str:
+            """The year that places this day/month inside the statement period.
+
+            The previous rule compared the month against the statement's end
+            month, which mis-assigned any period spanning a month boundary
+            mid-year and put transactions in the wrong FINANCIAL year.
+            """
+            resolved = resolve_year(int(day), int(month), period)
+            return str(resolved) if resolved else default_year
 
         """Convert various HSBC date formats to YYYY-MM-DD."""
         # DD Mon YYYY or DD Mon YY
@@ -265,7 +365,7 @@ class HSBCPDFParser(BaseParser):
             month = MONTH_MAP.get(mon, "")
             if not month:
                 return ""
-            return f"{infer_year(month)}-{month}-{day.zfill(2)}"
+            return f"{infer_year(day, month)}-{month}-{day.zfill(2)}"
 
         # DD/MM/YYYY
         m = re.match(r"(\d{1,2})/(\d{2})/(\d{2,4})", date_str)
@@ -279,9 +379,33 @@ class HSBCPDFParser(BaseParser):
         m = re.match(r"(\d{1,2})/(\d{2})", date_str)
         if m:
             day, month = m.group(1), m.group(2)
-            return f"{infer_year(month)}-{month}-{day.zfill(2)}"
+            return f"{infer_year(day, month)}-{month}-{day.zfill(2)}"
 
         return ""
 
     def _parse_amount(self, s: str) -> float:
         return float(s.replace(",", "").replace(" ", ""))
+
+
+# HSBC's transaction-account statements ("Financial Statement") print their
+# balances differently from the credit card ones: an opening "Balance Brought
+# Forward" row and a per-account "Balance" in the account header. Without these a
+# dormant account parses to no rows AND no balances, which cannot be told apart
+# from a failed parse.
+_BROUGHT_FORWARD_RE = re.compile(r"Balance Brought Forward\s+\$?(-?[\d,]+\.\d{2})", re.I)
+_ACCOUNT_BALANCE_RE = re.compile(
+    r"Account(?:\s+No\.?)?\s+\S+\s+(?:Currency\s+\w+\s+)?Balance\s+\$?(-?[\d,]+\.\d{2})", re.I)
+
+
+_CLOSING_BALANCE_RE = re.compile(r"CLOSING BALANCE\s+\$?(-?[\d,]+\.\d{2})", re.I)
+
+
+def account_statement_balances(text: str) -> tuple[float | None, float | None]:
+    """(opening, closing) for HSBC's transaction-account layout, else (None, None)."""
+    # Read each independently: requiring both meant one unmatched pattern threw
+    # away the other, leaving a statement with no balances at all and therefore
+    # indistinguishable from a failed parse.
+    opening = _BROUGHT_FORWARD_RE.search(text)
+    closing = _ACCOUNT_BALANCE_RE.search(text) or _CLOSING_BALANCE_RE.search(text)
+    return (float(opening.group(1).replace(",", "")) if opening else None,
+            float(closing.group(1).replace(",", "")) if closing else None)

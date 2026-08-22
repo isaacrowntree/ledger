@@ -69,7 +69,7 @@ class TestSourceOfTruthDetection:
 
     def test_ing_bpay_hsbc_is_transfer(self):
         patterns, sot = self._get_patterns()
-        txn = self._make_txn("BPAY Bill Payment - Hsbc Cards 4265571")
+        txn = self._make_txn("BPAY Bill Payment - Hsbc Cards 4000123")
         assert is_payment_to_source_of_truth(txn, patterns, sot)
 
     def test_ing_woolworths_is_not_transfer(self):
