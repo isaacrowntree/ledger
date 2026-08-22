@@ -51,6 +51,34 @@ class TestIdentity:
         assert row_identity(s, s.rows[0], 1) != row_identity(s, s.rows[1], 1)
 
 
+class TestRepeatedTransactions:
+    """Ported from PR #1's normalizer tests, which covered these before the
+    engine took over identity."""
+
+    def _two_rounds(self):
+        return _stmt([_row(0, "2026-01-01", "RIVERSIDE BOWLING CLUB", -8.0),
+                      _row(1, "2026-01-01", "RIVERSIDE BOWLING CLUB", -8.0)])
+
+    def test_identical_same_day_transactions_both_insert(self, conn, account, categorizer):
+        """Two rounds at the same bar bill identically but are not duplicates."""
+        result = ingest_statement(conn, self._two_rounds(), account, categorizer)
+        assert (result.inserted, result.skipped) == (2, 0)
+
+    def test_reingesting_a_statement_with_repeats_skips_both(self, conn, account, categorizer):
+        """Occurrence is positional, so a re-import matches rather than doubling."""
+        ingest_statement(conn, self._two_rounds(), account, categorizer)
+        again = ingest_statement(conn, self._two_rounds(), account, categorizer)
+        assert (again.inserted, again.skipped) == (0, 2)
+
+    def test_first_occurrence_adds_nothing_to_the_key(self):
+        """The first of a repeated pair must hash exactly as a lone transaction
+        does, or every already-imported transaction stops matching."""
+        lone = _stmt([_row(0, "2026-01-01", "RIVERSIDE BOWLING CLUB", -8.0)])
+        pair = self._two_rounds()
+        assert row_identity(pair, pair.rows[0], 1) == row_identity(lone, lone.rows[0], 1)
+        assert row_identity(pair, pair.rows[1], 1) != row_identity(lone, lone.rows[0], 1)
+
+
 class TestIdempotency:
     def test_reingesting_the_same_statement_changes_nothing(self, conn, account, categorizer):
         s = _stmt([_row(0, "2026-01-01", "COFFEE", -5.0),
@@ -118,6 +146,70 @@ class TestTagging:
         assert result.inserted == 1
         tags = [r[0] for r in conn.execute("SELECT tag FROM transaction_tags")]
         assert tags, "expected the tagger to run"
+
+
+class TestSourceOfTruth:
+    """A card payment seen on the everyday account is a transfer, not spending.
+
+    Ported from the normalizer tests the engine replaced: nothing else exercised
+    this end-to-end, so the engine could have stopped marking transfers without
+    a single test noticing.
+    """
+
+    def _patterns(self):
+        from tests.conftest import FIXTURE_DIR
+        from etl.normalizer import load_payment_patterns
+        return load_payment_patterns(FIXTURE_DIR / "accounts.yaml")
+
+    def test_payment_to_a_source_of_truth_account_becomes_a_transfer(
+            self, conn, account, categorizer):
+        patterns, sot_types = self._patterns()
+        s = _stmt([_row(0, "2026-01-01",
+                        "Intl Atmpurchase - Receipt 127425 PAYPAL *TWILIO 4029357733", -17.46)],
+                  source_type="ing")
+        result = ingest_statement(conn, s, account, categorizer,
+                                  payment_patterns=patterns, source_of_truth_types=sot_types)
+        assert result.inserted == 1
+        row = conn.execute("""
+            SELECT t.is_transfer, c.name AS cat FROM transactions t
+            LEFT JOIN categories c ON c.id = t.category_id
+            WHERE t.description LIKE '%TWILIO%'""").fetchone()
+        assert row["is_transfer"] == 1
+        assert row["cat"] == "Transfers"
+
+    def test_the_source_of_truth_side_keeps_its_real_category(
+            self, conn, account, categorizer):
+        patterns, sot_types = self._patterns()
+        rows = [_row(0, "2026-01-01", "Twilio", -17.46)]
+        rows[0].reference_id = "TXN_TWILIO_001"
+        s = _stmt(rows, source_type="paypal")
+        ingest_statement(conn, s, account, categorizer,
+                         payment_patterns=patterns, source_of_truth_types=sot_types)
+        row = conn.execute("""
+            SELECT t.is_transfer, c.name AS cat FROM transactions t
+            LEFT JOIN categories c ON c.id = t.category_id
+            WHERE t.description = 'Twilio'""").fetchone()
+        assert row["is_transfer"] == 0
+        assert row["cat"] == "Business: Software & Subscriptions"
+
+    def test_the_expense_is_counted_once(self, conn, account, categorizer):
+        """Both sides are stored, but only the source-of-truth side is spending."""
+        patterns, sot_types = self._patterns()
+        other = db.ensure_account(conn, "PayPal Side", "paypal", account_type="checking")
+        ing = _stmt([_row(0, "2026-01-01", "Intl Atmpurchase - PAYPAL *TWILIO", -17.46)],
+                    source_type="ing")
+        pp_rows = [_row(0, "2026-01-01", "Twilio", -17.46)]
+        pp_rows[0].reference_id = "TXN_T1"
+        pp = _stmt(pp_rows, source_type="paypal")
+
+        ingest_statement(conn, ing, account, categorizer,
+                         payment_patterns=patterns, source_of_truth_types=sot_types)
+        ingest_statement(conn, pp, other, categorizer,
+                         payment_patterns=patterns, source_of_truth_types=sot_types)
+
+        spending = conn.execute(
+            "SELECT COUNT(*) FROM transactions WHERE is_transfer = 0").fetchone()[0]
+        assert spending == 1
 
 
 class TestWindow:
