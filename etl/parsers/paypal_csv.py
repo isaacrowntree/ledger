@@ -52,12 +52,22 @@ class PayPalCSVParser(BaseParser):
         "General currency conversion",
     }
 
-    # Skip these transaction types entirely
+    # Rows that are not money movements. A PayPal export writes a "Shopping
+    # Cart Item" line for every payment, carrying the SAME transaction ID and
+    # the same amount with the opposite sign -- a line item, not a second
+    # payment -- and an authorisation is a hold placed before the payment
+    # settles. Both spellings of "authorisation" are listed because the
+    # Australian export uses -isation and the skip list only had -ization, so
+    # every hold was being imported as a charge.
     SKIP_TYPES = {
         "General Currency Conversion",
         "General currency conversion",
         "Temporary Hold",
         "General Authorization",
+        "General Authorisation",
+        "Void of Authorization",
+        "Void of Authorisation",
+        "Shopping Cart Item",
     }
 
     def _read(self, file_path: Path) -> list[RawTransaction]:

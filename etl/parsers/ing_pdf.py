@@ -99,7 +99,15 @@ class INGPDFParser(BaseParser):
         # prose: an everyday statement mentions "Orange Advantage" in a product
         # footer, and sniffing for that classified a transaction account as a
         # mortgage and inverted every amount on it.
-        statement.balance_convention = detect_convention(rows, opening)
+        # A loan's balance is a debt: it rises when interest is charged. Vote
+        # counting gets this wrong on a statement whose charges outnumber its
+        # repayments -- a new loan's first quarter is mostly interest and fees --
+        # so the header decides, and the balances only break a tie elsewhere.
+        default = (BalanceConvention.OWING if is_loan_statement(text)
+                   else BalanceConvention.SIGNED)
+        statement.balance_convention = (
+            default if default is BalanceConvention.OWING
+            else detect_convention(rows, opening, default=default))
         resign_unsigned_rows(rows, statement.balance_convention, opening)
 
         return statement
@@ -486,3 +494,20 @@ def _following_values(lines: list[str], start: int) -> list[float] | None:
             if len(found) == 4:
                 return found
     return None
+
+
+# A loan statement announces itself in its first few lines. The search is
+# confined to the header because an EVERYDAY statement carries an "Orange
+# Advantage" product footer further down, and matching that classified a
+# transaction account as a mortgage and inverted every amount on it.
+LOAN_HEADER_LINES = 15
+_LOAN_HEADER_RE = re.compile(r"Loan statement|Loan type\s*:|Home Loan", re.I)
+
+
+def is_loan_statement(text: str) -> bool:
+    """True when the statement header says this is a loan account."""
+    lines = [l for l in text.splitlines() if l.strip()][:LOAN_HEADER_LINES]
+    header = "\n".join(lines)
+    # "Loan" and "statement" are printed on separate lines in some layouts.
+    collapsed = " ".join(lines)
+    return bool(_LOAN_HEADER_RE.search(header) or _LOAN_HEADER_RE.search(collapsed))
