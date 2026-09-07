@@ -17,39 +17,60 @@ etl/parsers/my_bank_csv.py
 
 ### 2. Implement the BaseParser
 
-Every parser must extend `BaseParser` from `etl/parsers/base.py`:
+Every parser extends `BaseParser` from `etl/parsers/base.py`. There is one entry
+point -- `parse_statement` -- and it returns a `ParsedStatement`: the parser's
+complete account of what the file says, not a bare list of transactions. See
+[The parser contract](#the-parser-contract) below for why.
 
 ```python
 from abc import ABC, abstractmethod
 from pathlib import Path
-from etl.models import RawTransaction
+
+from etl.contract import BalanceConvention, ParsedStatement
 
 
 class BaseParser(ABC):
     @abstractmethod
-    def parse(self, file_path: Path) -> list[RawTransaction]:
+    def parse_statement(self, file_path: Path) -> ParsedStatement:
         ...
 
     @property
     @abstractmethod
     def source_type(self) -> str:
         ...
+
+    @property
+    @abstractmethod
+    def balance_convention(self) -> BalanceConvention:
+        ...
 ```
 
-Here is a minimal CSV parser:
+Here is a minimal CSV parser. It builds `RawTransaction` objects and hands them
+to `statement_from_transactions`, which assembles the rows -- picking up a
+per-row running balance from `raw_data` where the source prints one:
 
 ```python
 import csv
 from pathlib import Path
 
+from etl.contract import BalanceConvention, ParsedStatement
 from etl.models import RawTransaction
-from etl.parsers.base import BaseParser
+from etl.parsers.base import BaseParser, chronological, statement_from_transactions
 
 
 class MyBankCSVParser(BaseParser):
     source_type = "mybank"
 
-    def parse(self, file_path: Path) -> list[RawTransaction]:
+    # A transaction account: the balance moves with the amount.
+    balance_convention = BalanceConvention.SIGNED
+
+    def parse_statement(self, file_path: Path) -> ParsedStatement:
+        transactions = chronological(self._read(file_path))
+        return statement_from_transactions(
+            self, file_path, transactions,
+            opening_balance=..., closing_balance=...)
+
+    def _read(self, file_path: Path) -> list[RawTransaction]:
         transactions = []
         with open(file_path, newline="", encoding="utf-8-sig") as f:
             reader = csv.DictReader(f)
@@ -119,6 +140,7 @@ Key points:
 - `amount` should be positive for income, negative for expenses
 - `raw_data` should contain the original row/record -- it is stored in the `raw_imports` table for auditing and balance extraction
 - `reference_id` is used for dedup hashing if set (important for sources like PayPal that have unique transaction IDs)
+- put the running balance in `raw_data["balance"]` where the statement prints one: `statement_from_transactions` reads it from there onto each row, and without it the engine's chain check and the sign repair both have nothing to work with
 
 ### 4. Register the parser in cli.py
 
@@ -193,7 +215,19 @@ PDF parsing is trickier than CSV because:
 - You need to handle multi-line descriptions, page breaks, and headers
 - Balance columns help verify you have parsed amounts correctly
 
-Look at `etl/parsers/ing_pdf.py`, `etl/parsers/hsbc_pdf.py`, or `etl/parsers/coles_pdf.py` for real-world examples.
+**If the statement prints debits and credits in separate columns, do not use
+`extract_text()`.** Flattening the page throws away the only thing that tells a
+$10 fee from a $10 deposit -- both print as bare positive numbers. Use
+`etl/parsers/pdf_layout.py` instead: `extract_rows()` keeps each word's
+horizontal extent, and `ColumnRuler.from_header()` recovers the column by
+matching a word's *right* edge against the column heading's (the columns are
+right-aligned, so right edges stay put while left edges drift with the width of
+the number). Read the anchors from the statement's own header row rather than
+hardcoding positions -- a bank changes its labels and their placement between
+layouts, and HSBC alone has shipped two.
+
+Look at `etl/parsers/ing_pdf.py` (line-based), `etl/parsers/cba_pdf.py` or
+`etl/parsers/hsbc_account_pdf.py` (column-based) for real-world examples.
 
 ## The principle: the statement is the oracle
 
@@ -245,7 +279,8 @@ class MyBankPDFParser(BaseParser):
     def parse_statement(self, file_path: Path) -> ParsedStatement:
         rows = [...]                                # chronological, indexed from 0
         return self.build(file_path, rows,
-                          opening_balance=..., closing_balance=...)
+                          opening_balance=..., closing_balance=...,
+                          period_start=..., period_end=...)
 ```
 
 What you must get right:

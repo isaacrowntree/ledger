@@ -66,11 +66,21 @@ Always works, no setup. The fallback when nothing else does.
 | PayPal | `staging/paypal/` | `*.csv` |
 | Bankwest | `staging/bankwest/` | `*.pdf` |
 | Bankwest (CSV) | `staging/bankwest-csv/` | `*.csv` |
+| Bankwest home loan | `staging/bankwest-loan/` | `*.pdf` |
+| Bankwest offset | `staging/bankwest-offset/` | `*.pdf` |
+| CBA transaction account | `staging/cba/` | `*.pdf` |
+| CBA credit card | `staging/cba-cc/` | `*.pdf` |
 | HSBC | `staging/hsbc/` | `*.pdf` |
+| HSBC (CSV export) | `staging/hsbc-csv/` | `*.csv` |
 | Coles Mastercard | `staging/coles/` | `*.pdf` |
 | Coles Mastercard (CSV) | `staging/coles-csv/` | `*.csv` |
 | Amex | `staging/amex/` | `*.csv` |
 | Airbnb | `staging/airbnb/` | `*.csv` |
+| CommSec contract notes | `staging/commsec/` | `*.pdf` |
+
+Some sources are told apart by directory rather than filename: CBA names every
+download `Statement<date>.pdf`, and the Bankwest home loan and offset share a
+layout but are different accounts.
 
 4. Prefix filenames with the `file_prefix` from `config/accounts.yaml` so the parser binds to the right account. Example: `business_2025-07-01_to_2025-09-30.pdf`.
 
@@ -84,7 +94,22 @@ ledger ingest --source ing
 ledger ingest --dry-run
 ```
 
-Processed files are moved to `data/archive/` so re-running is safe.
+Processed files are moved to `data/archive/` so re-running is safe. A statement
+whose rows do not account for its own printed balances is refused outright rather
+than partially ingested -- that is almost always a parser bug, so fix the parser
+rather than reaching for `--force`.
+
+A bank's PDF and CSV exports describe the same transaction with different text,
+and often a different date basis, so the two cannot dedup against each other.
+Ingest one format per period and clip at the boundary:
+
+```sh
+ledger ingest --source bankwest                        # statements through 04 Aug
+ledger ingest --source bankwest-csv --from 2026-08-05  # CSV covers only the tail
+```
+
+A windowed import is left in `staging/` rather than archived, since the file still
+holds transactions outside the window.
 
 ## After ingestion
 
@@ -99,6 +124,8 @@ Then:
 
 ```sh
 ledger split --backfill --fy 2025  # business splits for tax
+ledger shared --backfill            # household costs split with a partner
 ledger dedup                        # cross-account duplicate resolution
+ledger reconcile                    # prove the ledger against printed balances
 python -m api                       # dashboard
 ```
