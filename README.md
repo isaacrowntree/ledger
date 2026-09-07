@@ -8,13 +8,19 @@ A personal finance tool that ingests bank statements from multiple Australian ba
 
 ## What it does
 
-- **Multi-source ingestion** — parse statements from ING, PayPal, Bankwest, HSBC, Coles Mastercard, and Amex (PDF + CSV)
+- **Multi-source ingestion** — parse statements from ING, CBA, Bankwest, HSBC, PayPal, Coles Mastercard, Amex and Airbnb (PDF + CSV)
 - **Auto-categorisation** — regex-based rules assign categories to transactions; learns from manual overrides
 - **Source-of-truth dedup** — prevents double-counting when transactions appear on both a bank account and a credit card
 - **Business splits** — automatically allocate percentages of expenses to businesses for tax reporting
 - **ATO tax return view** — structured output matching Australian individual tax return sections (salary, rental, business schedule, deductions)
 - **Financial year view** — outgoing/incoming/rental/work-trip sub-tabs replacing the manual Excel spreadsheet
 - **Net worth dashboard** — accounts, credit cards, property, vehicles with statement-sourced balances
+- **Shared expenses** — split household costs with a partner and track what each side owes
+- **Recurring schedules** — config-driven repayment/subscription schedules with their own dashboard tab
+- **Depreciation register** — business assets and their per-FY decline in value
+- **Capital gains** — CommSec contract notes parsed into a CGT schedule
+- **Lodgement archive** — previously lodged returns kept alongside the computed ones
+- **Reconciliation** — statement balances checked against the ledger to catch silent gaps
 - **Tags** — orthogonal to categories; sub-classify transactions for reporting (e.g. `flight`, `biz-hosting`, `rental-income`)
 - **Local-first** — SQLite database, no cloud dependency, your data stays on your machine
 
@@ -31,6 +37,10 @@ pip install -e .
 cp config/accounts.yaml.example config/accounts.yaml
 cp config/categories.yaml.example config/categories.yaml
 cp config/tax.yaml.example config/tax.yaml
+# Optional: recurring schedules, depreciation register, lodged-return archive
+cp config/schedules.yaml.example config/schedules.yaml
+cp config/depreciation.yaml.example config/depreciation.yaml
+cp config/ato_returns.yaml.example config/ato_returns.yaml
 # Edit these files with your accounts, merchant rules, and tax details
 
 # Initialise database
@@ -58,10 +68,11 @@ python -m api
 | Bankwest credit card | PDF eStatements | `etl/parsers/bankwest_pdf.py` |
 | Bankwest home loan / offset | PDF statements | `etl/parsers/bankwest_account_pdf.py` |
 | Bankwest | CSV export | `etl/parsers/bankwest_csv.py` |
-| HSBC | PDF statements | `etl/parsers/hsbc_pdf.py` |
+| HSBC credit card | PDF statements | `etl/parsers/hsbc_pdf.py` |
+| HSBC everyday account | PDF statements | `etl/parsers/hsbc_account_pdf.py` |
+| HSBC | CSV export (TransHist) | `etl/parsers/hsbc_csv.py` |
 | Coles Mastercard | PDF statements | `etl/parsers/coles_pdf.py` |
 | Coles Mastercard | CSV export | `etl/parsers/coles_csv.py` |
-| HSBC | CSV export (TransHist) | `etl/parsers/hsbc_csv.py` |
 | CommSec | PDF contract notes (CGT) | `etl/parsers/commsec_pdf.py` |
 | Amex | CSV download | `etl/parsers/amex_csv.py` |
 | Airbnb | CSV payout report | `etl/parsers/airbnb_csv.py` |
@@ -70,12 +81,14 @@ Adding a new bank: implement `BaseParser` in `etl/parsers/`, add to `PARSERS` in
 
 ### Column-based PDF statements
 
-CBA and Bankwest print debits and credits in separate columns as bare positive
-numbers, so flattening a page to text loses the only thing that tells a $10 fee
-from a $10 deposit. Those parsers use `etl/parsers/pdf_layout.py`, which keeps
-each word's horizontal position and recovers the column from its right edge --
-the columns are right-aligned, so right edges stay put while left edges drift
-with the width of the number.
+CBA, Bankwest and HSBC's everyday accounts print debits and credits in separate
+columns as bare positive numbers, so flattening a page to text loses the only
+thing that tells a $10 fee from a $10 deposit. Those parsers use
+`etl/parsers/pdf_layout.py`, which keeps each word's horizontal position and
+recovers the column from its right edge -- the columns are right-aligned, so
+right edges stay put while left edges drift with the width of the number. The
+column anchors are read from each statement's own header row, since a bank
+changes its labels and their positions between layouts.
 
 Statements are assigned to an account by staging directory, not filename, since
 CBA names every download `Statement<date>.pdf` and the Bankwest home loan and
@@ -160,6 +173,8 @@ ledger shared --backfill         # Apply shared-expense rules to existing rows
 ledger reconcile                 # Check balances against statement closing balances
 ledger reconcile --since 2026-01-01 --account Bankwest
 ledger ingest --force            # Ingest even if a statement fails validation
+ledger dedup                     # Find and resolve cross-account duplicates
+ledger tag --pattern "UBER" --tag transport   # Bulk tag/recategorise by description
 ```
 
 ### Ingest-time validation
@@ -221,6 +236,12 @@ The Flask API serves data to the dashboard at `http://localhost:5050`.
 | `GET /api/spreadsheet/rental?fy=2025` | Rental property schedule |
 | `GET /api/ato/return?fy=2025` | Structured ATO return data |
 | `GET /api/accounts/summary` | Account balances and net worth |
+| `GET /api/shared-expenses` | Household expenses split with a partner |
+| `GET /api/schedules` | Recurring schedules (repayments, subscriptions) |
+| `GET /api/depreciation` | Depreciation register by financial year |
+| `GET /api/ato/lodged` | Previously lodged returns from `ato_returns.yaml` |
+| `GET /api/holdings` | Investment holdings and their events |
+| `GET /api/work-trips` | Work trips backing the travel deduction |
 | `PATCH /api/transactions/<id>` | Update category or notes |
 | `PATCH /api/transactions/<id>/split` | Override business split % |
 
@@ -230,14 +251,21 @@ The Flask API serves data to the dashboard at `http://localhost:5050`.
 config/              # Your personal config (gitignored)
   accounts.yaml      # Bank accounts and source-of-truth rules
   categories.yaml    # Categories, regex rules, tag rules
-  tax.yaml           # ATO tax config (businesses, rental, depreciation)
+  tax.yaml           # ATO tax config (businesses, rental, deductions)
+  schedules.yaml     # Recurring schedules (repayments, subscriptions)
+  depreciation.yaml  # Business asset register (decline in value)
+  ato_returns.yaml   # Previously lodged returns
 
 etl/                 # Extract-Transform-Load pipeline
   parsers/           # One parser per bank format (PDF/CSV)
+  contract.py        # What a parser must hand back (ParsedStatement)
+  engine.py          # Identity, idempotency and validation of statements
   categorizer.py     # Regex-based category matching
   tagger.py          # Multi-tag assignment
   splitter.py        # Business expense split engine
   normalizer.py      # Dedup, source-of-truth, insert pipeline
+  reconcile.py       # Balance checks against statement figures
+  cgt.py             # Capital gains from CommSec contract notes
   cli.py             # CLI entry point
 
 api/                 # Flask REST API
@@ -246,7 +274,11 @@ api/                 # Flask REST API
 frontend/            # Vite + TypeScript dashboard
   src/main.ts        # Dashboard, transactions, budget, trends, tax views
   src/spreadsheet.ts # Financial year view (outgoing/incoming/rental/trips)
+  src/charts.ts      # Chart rendering
+  src/filters.ts     # Shared filter state
   src/api.ts         # API client and types
+
+docs/                # Astro documentation site
 
 data/                # SQLite database (gitignored)
 staging/             # Drop statement files here (gitignored)
