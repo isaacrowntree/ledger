@@ -1,13 +1,33 @@
 import re
+from functools import lru_cache
 from pathlib import Path
 
 import pdfplumber
 
-from etl.contract import BalanceConvention, ParsedRow, ParsedStatement
+from etl.contract import BalanceConvention, ParsedStatement
 from etl.models import RawTransaction
 from etl.parsers.dates import StatementPeriod, parse_period, resolve_year
 from etl.parsers.base import (BaseParser, chronological, detect_convention,
-                              labelled_balance, money, resign_unsigned_rows)
+                              labelled_balance, resign_unsigned_rows,
+                              statement_from_transactions)
+from etl.parsers.hsbc_account_pdf import AccountStatement, parse_account_statement
+
+
+@lru_cache(maxsize=32)
+def _pdf_text(file_path: str) -> str:
+    """The flattened text of a PDF, read once.
+
+    One statement is asked for its text several times over a single parse, and
+    again by the corpus tests; opening the file each time dominated the run.
+    """
+    pages = []
+    with pdfplumber.open(file_path) as pdf:
+        for page in pdf.pages:
+            text = page.extract_text()
+            if text:
+                pages.append(text)
+    return "\n".join(pages)
+
 
 MONTH_MAP = {
     "Jan": "01", "Feb": "02", "Mar": "03", "Apr": "04",
@@ -87,16 +107,19 @@ class HSBCPDFParser(BaseParser):
     balance_convention = BalanceConvention.OWING
 
     def parse_statement(self, file_path: Path) -> ParsedStatement:
-        transactions = chronological(self._read(file_path))
         text = self._extract_text(file_path)
-        rows = [
-            ParsedRow(index=i, date=t.date, description=t.description,
-                      amount=t.amount, raw=t.raw_data or {}, currency=t.currency,
-                      original_amount=t.original_amount,
-                      original_currency=t.original_currency, fee=t.fee,
-                      reference_id=t.reference_id)
-            for i, t in enumerate(transactions)
-        ]
+
+        # An everyday account prints debits and credits in separate columns, and
+        # flattened text cannot tell them apart, so that layout is read by column
+        # position instead. "Balance Brought Forward" is what marks it: reading
+        # the page geometry costs a second pass over the PDF, and a card
+        # statement -- which has no such columns -- should not pay for it.
+        if _ACCOUNT_LAYOUT_RE.search(text):
+            account = parse_account_statement(file_path)
+            if account is not None:
+                return self._account_statement(file_path, account)
+
+        transactions = chronological(self._read(file_path))
         opening = labelled_balance(text, "Opening [Bb]alance")
         closing = labelled_balance(text, "Closing [Bb]alance")
         if opening is None or closing is None:
@@ -105,8 +128,10 @@ class HSBCPDFParser(BaseParser):
             opening = opening if opening is not None else account_opening
             closing = closing if closing is not None else account_closing
 
-        statement = self.build(file_path, rows,
-                               opening_balance=opening, closing_balance=closing)
+        statement = statement_from_transactions(
+            self, file_path, transactions,
+            opening_balance=opening, closing_balance=closing)
+        rows = statement.rows
 
         # HSBC issues both credit cards (balance = what is owed) and day to day
         # accounts (balance = what is there). Assuming one would invert every
@@ -125,6 +150,39 @@ class HSBCPDFParser(BaseParser):
         resign_unsigned_rows(rows, statement.balance_convention, opening)
         return statement
 
+    def _account_statement(self, file_path: Path, account: AccountStatement
+                           ) -> ParsedStatement:
+        """Wrap what the column reader found in the contract the engine expects.
+
+        The convention is stated outright rather than inferred: this layout is a
+        day to day account, whose balance falls when money leaves, and the class
+        default (a card's OWING) would invert every row.
+        """
+        transactions = [
+            RawTransaction(
+                date=entry.date,
+                description=re.sub(r"\s+", " ", entry.description).strip(),
+                amount=entry.amount,
+                currency="AUD",
+                source_type=self.source_type,
+                source_file=str(file_path),
+                raw_data={
+                    "date": entry.date,
+                    "description": entry.description,
+                    "amount": f"{entry.amount:.2f}",
+                    "balance": "" if entry.balance is None else f"{entry.balance:.2f}",
+                },
+            )
+            for entry in account.entries
+        ]
+        statement = statement_from_transactions(
+            self, file_path, transactions,
+            opening_balance=account.opening, closing_balance=account.closing,
+            period_start=account.period.start if account.period else None,
+            period_end=account.period.end if account.period else None)
+        statement.balance_convention = BalanceConvention.SIGNED
+        return statement
+
     def _read(self, file_path: Path) -> list[RawTransaction]:
         text = self._extract_text(file_path)
         statement_year, _ = self._detect_year_and_end_month(text)
@@ -141,13 +199,7 @@ class HSBCPDFParser(BaseParser):
         return transactions
 
     def _extract_text(self, file_path: Path) -> str:
-        pages = []
-        with pdfplumber.open(file_path) as pdf:
-            for page in pdf.pages:
-                text = page.extract_text()
-                if text:
-                    pages.append(text)
-        return "\n".join(pages)
+        return _pdf_text(str(file_path))
 
     def _detect_year_and_end_month(self, text: str) -> tuple[str, int | None]:
         """Find the statement period END year and month, e.g. 'Statement Period: 15 Dec 2024 to 14 Jan 2025'.
@@ -398,6 +450,10 @@ _ACCOUNT_BALANCE_RE = re.compile(
 
 
 _CLOSING_BALANCE_RE = re.compile(r"CLOSING BALANCE\s+\$?(-?[\d,]+\.\d{2})", re.I)
+
+# Both everyday-account layouts open their table with this row, with or without
+# a figure beside it; no card statement has one.
+_ACCOUNT_LAYOUT_RE = re.compile(r"BALANCE\s+BROUGHT\s+FORWARD", re.I)
 
 
 def account_statement_balances(text: str) -> tuple[float | None, float | None]:
