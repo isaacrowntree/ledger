@@ -131,3 +131,77 @@ class CreditCard:
             money(amount, cls.AMOUNT_X1) if amount else None,
             page=page,
         )
+
+
+class HSBCAccount:
+    """HSBC everyday-account geometry, measured from a real statement.
+
+    The later layout, whose columns are headed "Debits/Withdrawals" and
+    "Credits/Deposits".
+    """
+    DATE_X0, DESC_X0 = 46.1, 98.5
+    DEBIT_X1, CREDIT_X1, BALANCE_X1 = 379.1, 472.7, 550.6
+    HEADER = [
+        ("Date", 46.1, 63.1), ("Transaction", 98.5, 142.0), ("Details", 144.0, 170.0),
+        ("Debits/Withdrawals", 305.6, 379.1), ("Credits/Deposits", 412.2, 472.7),
+        ("Balance", 520.1, 550.6),
+    ]
+    # The account's own heading, above the column header. Its "Balance" figure
+    # sits well left of the balance column, so it is read as text, not as a
+    # column amount.
+    HEADING_BALANCE_X1 = 523.4
+
+    @classmethod
+    def header(cls, page: int = 1) -> Row:
+        return _header(cls.HEADER, page)
+
+    @classmethod
+    def heading(cls, name="DAY TO DAY ACCOUNT", number="519410412",
+                balance="0.00", page: int = 1) -> Row:
+        return line(
+            text_words(f"{name} BSB No. 342094 Account {number} Currency AUD Balance",
+                       46.1),
+            money(balance, cls.HEADING_BALANCE_X1),
+            page=page,
+        )
+
+    @classmethod
+    def row(cls, date=None, desc="", debit=None, credit=None, balance=None, page=1) -> Row:
+        return line(
+            text_words(date, cls.DATE_X0) if date else None,
+            text_words(desc, cls.DESC_X0) if desc else None,
+            money(debit, cls.DEBIT_X1) if debit else None,
+            money(credit, cls.CREDIT_X1) if credit else None,
+            money(balance, cls.BALANCE_X1) if balance else None,
+            page=page,
+        )
+
+    @classmethod
+    def totals(cls, debits="0.00", credits="0.00", page: int = 1) -> Row:
+        return line(
+            text_words("Transaction Total", cls.DESC_X0),
+            money(debits, cls.DEBIT_X1),
+            money(credits, cls.CREDIT_X1),
+            page=page,
+        )
+
+
+class HSBCFinancial(HSBCAccount):
+    """The older "Financial Statement" layout: "Debit" and "Credit", further left."""
+    DATE_X0, DESC_X0 = 57.0, 116.5
+    DEBIT_X1, CREDIT_X1, BALANCE_X1 = 375.9, 460.6, 541.4
+    HEADER = [
+        ("Date", 57.0, 74.0), ("Transaction", 116.5, 160.0), ("Details", 162.0, 188.0),
+        ("Debit", 356.4, 375.9), ("Credit", 438.6, 460.6), ("Balance", 510.9, 541.4),
+    ]
+    HEADING_BALANCE_X1 = 508.1
+
+    @classmethod
+    def heading(cls, name="AUD DAY TO DAY ACCOUNT", number="519410412",
+                balance="0.00", page: int = 1) -> Row:
+        return line(
+            text_words(f"{name} Branch DIRECT BNKING BSB 342094 "
+                       f"Account No {number} Balance", 41.2),
+            money(balance, cls.HEADING_BALANCE_X1),
+            page=page,
+        )
