@@ -128,3 +128,39 @@ Returns a JSON object with sections: `income` (salary, interest, tax withheld), 
 | `GET` | `/api/tax-overrides?fy=2025` | List tax overrides |
 | `POST` | `/api/tax-overrides` | Create/update a tax override |
 | `DELETE` | `/api/tax-overrides/<id>` | Delete a tax override |
+
+## Shared Expenses
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `GET` | `/api/shared-expenses` | Household expenses split with a partner, with totals shared and settled |
+| `POST` | `/api/shared-expenses` | Mark a transaction as shared |
+| `PATCH` | `/api/shared-expenses/<id>` | Change a share |
+| `DELETE` | `/api/shared-expenses/<id>` | Remove a share |
+
+## Recurring Schedules
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `GET` | `/api/schedules` | Recurring schedules from `config/schedules.yaml`, expected against paid to date |
+
+## Depreciation and Lodged Returns
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `GET` | `/api/depreciation` | Asset register and decline in value by FY |
+| `GET` | `/api/ato/lodged` | Returns already lodged, from `config/ato_returns.yaml` |
+
+## Economics
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `GET` | `/api/cpi` | CPI series used to deflate historical figures |
+| `POST` | `/api/cpi/sync` | Refresh the CPI series from the ABS |
+| `GET` | `/api/summary/economics` | Spending against inflation |
+
+## Maintenance
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `POST` | `/api/dedup` | Run cross-account duplicate resolution |
