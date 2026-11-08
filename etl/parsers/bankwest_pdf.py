@@ -64,6 +64,11 @@ STOP_PATTERNS = [
     re.compile(r"^continued on next page", re.IGNORECASE),
     re.compile(r"^Closing Balance\b", re.IGNORECASE),
     re.compile(r"^Page \d+ of \d+", re.IGNORECASE),
+    # The 2020-21 layout prints the repayment warning straight after the last
+    # transaction on the page. Read as continuation text it was glued onto that
+    # purchase, and its "Repayment" filed a dance class under Mortgage.
+    re.compile(r"^Minimum Repayment Warning", re.IGNORECASE),
+    re.compile(r"^Having trouble making repayments", re.IGNORECASE),
 ]
 
 

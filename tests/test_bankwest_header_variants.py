@@ -42,3 +42,21 @@ class TestHeaderVariants:
         assert BankwestPDFParser()._parse_entries(
             "Your interest rates Your account summary\n"
             "06 Jan 21 TRANSIT TOPUP CITYNAME $10.00") == []
+
+
+class TestRepaymentWarningEndsTheSection:
+    """The 2020-21 layout prints its minimum-repayment warning right after the
+    last row on a page. Read as a continuation it was glued onto that purchase,
+    and the word "Repayment" then categorised it as Mortgage."""
+
+    def test_warning_is_not_part_of_the_last_description(self):
+        entries = _entries(
+            "Date Description Card Debit Credit",
+            "03 Feb 21 SOME STORE PTY LTD SUBURB NSW $1,965.50\n"
+            "Minimum Repayment Warning: If you make only the minimum payment each month\n"
+            "it will take you longer to pay off your balance. For example:\n"
+            "Having trouble making repayments?: If you are having difficulty",
+        )
+        assert len(entries) == 1
+        assert entries[0]["description"] == "SOME STORE PTY LTD SUBURB NSW"
+        assert entries[0]["amount"] == -1965.50
