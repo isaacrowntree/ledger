@@ -57,11 +57,15 @@ PARSERS = {
     "bankwest-offset": (BankwestOffsetPDFParser, "bankwest-offset", "*.pdf"),
 }
 
-# Default account names for non-ING sources (ING uses file_prefix mapping)
+# Default account names for single-account sources. ING holds several accounts
+# and its exports carry no account number, so an ING file MUST match a
+# file_prefix in config/accounts.yaml -- an unmatched file is refused, never
+# defaulted. (A default once sent four FY23 everyday-account CSV exports, 1,268
+# rows, into the mortgage account, duplicating rows already ingested from PDFs.)
 ACCOUNT_NAMES = {
     "paypal": "PayPal",
-    "ing": "ING Orange Everyday",
-    "ing-csv": "ING Orange Everyday",
+    "ing": None,
+    "ing-csv": None,
     "airbnb": "Airbnb",
     "hsbc": "HSBC",
     "hsbc-csv": "HSBC",
@@ -89,11 +93,18 @@ def _build_file_prefix_map(config_path: Path) -> dict[str, str]:
     return prefix_map
 
 
-def _resolve_account_from_file(filename: str, prefix_map: dict[str, str], fallback: str) -> str:
-    """Match a filename to an account name using prefix map."""
-    for prefix, account_name in prefix_map.items():
-        if filename.startswith(prefix):
-            return account_name
+def _resolve_account_from_file(filename: str, prefix_map: dict[str, str],
+                               fallback: str | None) -> str | None:
+    """Match a filename to an account name using prefix map.
+
+    The longest matching prefix wins: two loan splits can share a stem
+    (``owner_loan`` and ``owner_loan_2``), so first-match would send both to
+    whichever was configured first. With ``fallback=None`` an unmatched
+    file resolves to None and the caller must refuse it.
+    """
+    matches = [p for p in prefix_map if filename.startswith(p)]
+    if matches:
+        return prefix_map[max(matches, key=len)]
     return fallback
 
 
@@ -241,6 +252,12 @@ def cmd_ingest(source: str | None = None, dry_run: bool = False,
         for file_path in files:
             # Resolve account per-file (important for ING multi-account)
             account_name = _resolve_account_from_file(file_path.name, prefix_map, ACCOUNT_NAMES[src])
+            if account_name is None:
+                print(f"\nREFUSED: {file_path.name} -- no file_prefix in config/accounts.yaml "
+                      f"matches it, and {src} files cannot be assigned an account by default. "
+                      f"Rename it to start with the account's prefix.")
+                total_rejected += 1
+                continue
             account_id = db.ensure_account(conn, account_name, src)
 
             print(f"\nProcessing: {file_path.name} → {account_name}")

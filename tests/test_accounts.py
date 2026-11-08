@@ -31,6 +31,21 @@ class TestFilePrefixMap:
             "unknown_file.pdf", prefix_map, "FallbackAccount"
         ) == "FallbackAccount"
 
+    def test_unmatched_file_without_fallback_is_unresolved(self):
+        # ING files must match a prefix; "personal Transactions.csv" once
+        # defaulted into the mortgage account.
+        prefix_map = _build_file_prefix_map(FIXTURE_DIR / "accounts.yaml")
+        assert _resolve_account_from_file(
+            "personal Transactions.csv", prefix_map, None
+        ) is None
+
+    def test_longest_prefix_wins(self):
+        # Two loan splits share a stem; first-match merged them into one account.
+        prefix_map = {"loan": "Loan Main", "loan_2": "Loan 2"}
+        assert _resolve_account_from_file("loan_2_2024.pdf", prefix_map, None) == "Loan 2"
+        assert _resolve_account_from_file("loan_1_2024.pdf", prefix_map, None) == "Loan Main"
+        assert _resolve_account_from_file("loan.pdf", prefix_map, None) == "Loan Main"
+
 
 class TestAccountTypes:
     def test_accounts_have_correct_types(self, conn):
