@@ -224,11 +224,14 @@ class HSBCPDFParser(BaseParser):
         return "balance" in header_line and ("debit" in header_line or "credit" in header_line)
 
     def _extract_closing_balance(self, text: str) -> float | None:
-        """Extract the closing balance from the statement header."""
-        m = re.search(r"Closing Balance\s+\$?([\d,]+\.\d{2})", text)
-        if m:
-            return float(m.group(1).replace(",", ""))
-        return None
+        """Extract the closing balance from the statement header.
+
+        Delegates to labelled_balance so a card in credit -- printed "-$156.47"
+        -- keeps its sign. This value is stored on every row and is what
+        `ledger reconcile` anchors on; dropping the sign produced a drift of
+        exactly twice the balance.
+        """
+        return labelled_balance(text, "Closing [Bb]alance")
 
     def _parse_entries(self, text: str, year: str, has_balance_col: bool, period: StatementPeriod | None = None) -> list[dict]:
         lines = text.split("\n")

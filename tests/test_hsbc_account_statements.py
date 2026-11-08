@@ -90,3 +90,19 @@ class TestConventionIsNotAssumed:
 
         rows = [_Row(-50.0, 950.0), _Row(-25.0, 925.0)]
         assert detect_convention(rows, opening=1000.0) is BalanceConvention.SIGNED
+
+
+class TestCardClosingBalanceSign:
+    """A card in credit prints its closing balance as "-$156.47". The stored
+    closing balance is what reconcile anchors on, and reading it unsigned
+    produced a drift of exactly twice the balance."""
+
+    def test_credit_balance_keeps_its_sign(self):
+        from etl.parsers.hsbc_pdf import HSBCPDFParser
+        text = "4/09/2020        CLOSING BALANCE        -$156.47\n"
+        assert HSBCPDFParser()._extract_closing_balance(text) == -156.47
+
+    def test_owing_balance_is_positive(self):
+        from etl.parsers.hsbc_pdf import HSBCPDFParser
+        text = "Closing Balance                              $6,575.56\n"
+        assert HSBCPDFParser()._extract_closing_balance(text) == 6575.56
