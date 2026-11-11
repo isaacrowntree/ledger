@@ -1,3 +1,4 @@
+import { categoryColor } from "../../lib/categoryColors";
 import { useState } from "react";
 import { Loaded, PageHead } from "../../components/ui";
 import { isoDate, monthLong, money } from "../../lib/format";
@@ -33,7 +34,7 @@ export function Budget() {
                 return (
                   <div key={b.category} className={`meter ${over ? "over" : ""}`}>
                     <div className="meter-head">
-                      <span>{b.category}</span>
+                      <span className="cat-cell"><i className="cat-dot" style={{ background: categoryColor(b.category) }} />{b.category}</span>
                       <span className="state">
                         {money(b.actual, { cents: false })} of {money(b.budget, { cents: false })}
                         {over ? ` · ${money(b.actual - b.budget, { cents: false })} over`
@@ -41,7 +42,7 @@ export function Budget() {
                       </span>
                     </div>
                     <div className="meter-track" style={{ position: "relative" }}>
-                      <div className="meter-fill" style={{ width: `${Math.min(100, (b.actual / b.budget) * 100)}%` }} />
+                      <div className="meter-fill cat" style={{ width: `${Math.min(100, (b.actual / b.budget) * 100)}%`, ["--cat" as string]: categoryColor(b.category) }} />
                       {current && (
                         <span aria-hidden style={{ position: "absolute", left: `${elapsed * 100}%`, top: -2, bottom: -2,
                           width: 2, background: "var(--ink)" }} />

@@ -1,3 +1,4 @@
+import { categoryColor } from "../../lib/categoryColors";
 import { useState } from "react";
 import { MonthlyBars, RankedBars } from "../../components/charts";
 import { Figure, Figures, Loaded, Money, PageHead, Section } from "../../components/ui";
@@ -47,7 +48,7 @@ export function YearReview() {
               </div>
               <Section title="Spending by category">
                 <div className="grid-2">
-                  <RankedBars limit={12} items={spendCats.map((c) => ({ label: c.category, value: -c.total }))} />
+                  <RankedBars limit={12} items={spendCats.map((c) => ({ label: c.category, value: -c.total, color: categoryColor(c.category) }))} />
                   <table className="ledger">
                     <thead><tr><th>Category</th><th className="num">Count</th><th className="num">Total</th><th className="num">A month</th></tr></thead>
                     <tbody>

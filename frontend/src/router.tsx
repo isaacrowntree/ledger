@@ -7,6 +7,7 @@ import {
   Link,
   Outlet,
   redirect,
+  useRouterState,
 } from "@tanstack/react-router";
 import { Overview } from "./views/Overview";
 import { Transactions } from "./views/money/Transactions";
@@ -56,13 +57,19 @@ const AREAS = [
   },
 ];
 
+function areaOf(pathname: string): string {
+  const first = pathname.split("/")[1];
+  return first === "money" || first === "tax" || first === "analysis" ? first : "overview";
+}
+
 function Shell() {
+  const pathname = useRouterState({ select: (st) => st.location.pathname });
   return (
-    <div className="shell">
+    <div className="shell" data-area={areaOf(pathname)}>
       <nav className="rail" aria-label="Sections">
         <div className="wordmark">Ledger</div>
         {AREAS.map((a) => (
-          <div className="rail-area" key={a.label}>
+          <div className="rail-area" key={a.label} data-area={areaOf(a.to)}>
             <Link to={a.to} activeOptions={{ exact: a.to === "/", includeSearch: false }}>{a.label}</Link>
             {a.children.length > 0 && (
               <ul>

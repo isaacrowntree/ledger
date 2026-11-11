@@ -10,6 +10,7 @@ import {
 import type { Transaction } from "../../api";
 import { Loaded, Money, PageHead } from "../../components/ui";
 import { displayDate } from "../../lib/format";
+import { categoryColor } from "../../lib/categoryColors";
 import { useAccountList, useCategories, useSharedMutations, useTransactions, useUpdateTransaction } from "../../lib/queries";
 
 const col = createColumnHelper<Transaction>();
@@ -107,11 +108,14 @@ function TxnTable({ rows, categories }: { rows: Transaction[]; categories: strin
         header: "Category",
         enableSorting: true,
         cell: (c) => (
-          <SavedSelect
-            value={c.getValue() ?? ""}
-            options={categories}
-            onSave={(v) => update.mutateAsync({ id: c.row.original.id, data: { category_name: v } })}
-          />
+          <span className="cat-cell">
+            <i className="cat-dot" style={{ background: categoryColor(c.getValue()) }} />
+            <SavedSelect
+              value={c.getValue() ?? ""}
+              options={categories}
+              onSave={(v) => update.mutateAsync({ id: c.row.original.id, data: { category_name: v } })}
+            />
+          </span>
         ),
       }),
       col.accessor("account_name", { header: "Account", cell: (c) => <span className="muted">{c.getValue()}</span> }),

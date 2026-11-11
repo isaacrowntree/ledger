@@ -170,7 +170,7 @@ export function RankedBars({
   kind = "spending",
   footer,
 }: {
-  items: { label: string; value: number; note?: string; other?: boolean }[];
+  items: { label: string; value: number; note?: string; other?: boolean; color?: string }[];
   limit?: number;
   kind?: "spending" | "income";
   footer?: ReactNode;
@@ -195,16 +195,20 @@ export function RankedBars({
   );
 }
 
-function RankedRow({ label, value, note, max, kind, other }: {
-  label: string; value: number; note?: string; max: number; kind: string; other?: boolean;
+function RankedRow({ label, value, note, max, kind, other, color }: {
+  label: string; value: number; note?: string; max: number; kind: string; other?: boolean; color?: string;
 }) {
   // The folded "other" row is a sum, not a category: neutral, so it never reads as the biggest one.
   return (
     <>
-      <span title={note} className={other ? "muted" : ""}>{label}</span>
+      <span title={note} className={`cat-cell ${other ? "muted" : ""}`}>
+        {color && !other && <i className="cat-dot" style={{ background: color }} />}
+        {label}
+      </span>
       <span>
         <div className={`bar ${kind === "income" ? "income" : ""}`}
-             style={{ width: `${(Math.max(value, 0) / max) * 100}%`, ...(other ? { background: "var(--series-neutral)" } : {}) }}
+             style={{ width: `${(Math.max(value, 0) / max) * 100}%`,
+                      ...(other ? { background: "var(--series-neutral)" } : color ? { background: color } : {}) }}
              title={`${label}: ${money(value)}`} />
       </span>
       <span className="val">{money(value, { cents: false })}</span>
@@ -217,7 +221,7 @@ export function SmallMultiples({
   groups,
   months,
 }: {
-  groups: { label: string; values: Record<string, number>; total: number }[];
+  groups: { label: string; values: Record<string, number>; total: number; color?: string }[];
   months: string[];
 }) {
   const max = niceMax(Math.max(1, ...groups.flatMap((g) => months.map((m) => g.values[m] || 0))));
@@ -229,7 +233,7 @@ export function SmallMultiples({
       {groups.map((g) => (
         <div className="multiple" key={g.label}>
           <h3>
-            <span>{g.label}</span>
+            <span className="cat-cell">{g.color && <i className="cat-dot" style={{ background: g.color }} />}{g.label}</span>
             <span className="muted">{money(g.total, { cents: false })}</span>
           </h3>
           <svg className="chart" viewBox={`0 0 ${w} ${h + 14}`} role="img" aria-label={`${g.label} by month`}>
@@ -239,7 +243,7 @@ export function SmallMultiples({
               return (
                 <g key={m}>
                   <title>{`${monthLong(m)}: ${money(v)}`}</title>
-                  <path d={barPath(i * bw + 1, h - bh, Math.max(bw - 2, 1), bh)} fill="var(--series-spending)" />
+                  <path d={barPath(i * bw + 1, h - bh, Math.max(bw - 2, 1), bh)} fill={g.color ?? "var(--series-spending)"} />
                   <rect x={i * bw} y={0} width={bw} height={h} fill="transparent" />
                 </g>
               );

@@ -1,3 +1,4 @@
+import { categoryColor } from "../lib/categoryColors";
 import { Link } from "@tanstack/react-router";
 import type { AccountSummary, Holding } from "../api";
 import { MonthlyBars, RankedBars } from "../components/charts";
@@ -124,14 +125,14 @@ export function Overview() {
                         return (
                           <div key={b.category} className={`meter ${over ? "over" : ""}`}>
                             <div className="meter-head">
-                              <span>{b.category}</span>
+                              <span className="cat-cell"><i className="cat-dot" style={{ background: categoryColor(b.category) }} />{b.category}</span>
                               <span className="state">
                                 {money(b.actual, { cents: false })} of {money(b.budget, { cents: false })}
                                 {over ? ` · ${money(b.actual - b.budget, { cents: false })} over` : ""}
                               </span>
                             </div>
                             <div className="meter-track">
-                              <div className="meter-fill" style={{ width: `${Math.min(100, (b.actual / b.budget) * 100)}%` }} />
+                              <div className="meter-fill cat" style={{ width: `${Math.min(100, (b.actual / b.budget) * 100)}%`, ["--cat" as string]: categoryColor(b.category) }} />
                             </div>
                           </div>
                         );
@@ -181,7 +182,7 @@ export function Overview() {
                       <RankedBars
                         items={p.categories
                           .filter((c) => !c.is_income && c.total < 0)
-                          .map((c) => ({ label: c.category, value: -c.total }))}
+                          .map((c) => ({ label: c.category, value: -c.total, color: categoryColor(c.category) }))}
                       />
                     </Section>
                   </>

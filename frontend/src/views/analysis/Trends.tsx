@@ -1,3 +1,4 @@
+import { categoryColor } from "../../lib/categoryColors";
 import { useMemo, useState } from "react";
 import type { PeriodSummary } from "../../api";
 import { SmallMultiples } from "../../components/charts";
@@ -43,7 +44,7 @@ function TrendsBody({ p, count, more }: { p: PeriodSummary; count: number; more:
     }
     const total = new Map(p.categories.map((c) => [c.category, -c.total]));
     const groups = [...by.entries()]
-      .map(([label, values]) => ({ label, values, total: total.get(label) ?? 0 }))
+      .map(([label, values]) => ({ label, values, total: total.get(label) ?? 0, color: categoryColor(label) }))
       .filter((g) => g.total > 0)
       .sort((a, b) => b.total - a.total);
     return { groups, months };

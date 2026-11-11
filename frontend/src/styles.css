@@ -497,3 +497,103 @@ button.copy.done { border-color: var(--hold); }
 
 .multiples { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 18px 22px; }
 .multiple h3 { display: flex; justify-content: space-between; font-weight: 500; font-size: 14px; margin-bottom: 2px; }
+
+/* =========================================================================
+   Colour pass. Two systems, each with one job:
+   - AREA accents say where you are: navy Overview, teal Money, plum Tax,
+     indigo Analysis. Chrome only (rail, headings, rules, figure blocks).
+   - CATEGORY colours say what the money was: eight fixed groups from the
+     validated categorical palette; everything else is neutral.
+   Text never wears a category colour; values stay in ink.
+   ========================================================================= */
+
+:root {
+  --cat-eat: #eb6834;        /* orange  */
+  --cat-groceries: #008300;  /* green   */
+  --cat-shopping: #e87ba4;   /* magenta */
+  --cat-car: #eda100;        /* yellow  */
+  --cat-housing: #6250d6;    /* violet  */
+  --cat-utilities: #1baf7a;  /* aqua    */
+  --cat-travel: #2a78d6;     /* blue    */
+  --cat-health: #e34948;     /* red     */
+  --cat-other: #9aa3ad;
+}
+
+.shell { --area: #24476b; --area-ink: #1b3550; }
+.shell[data-area="money"] { --area: #17766c; --area-ink: #0f5a52; }
+.shell[data-area="tax"] { --area: #7b4588; --area-ink: #5e3369; }
+.shell[data-area="analysis"] { --area: #4c55c9; --area-ink: #3a42a3; }
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --cat-eat: #d95926; --cat-groceries: #008300; --cat-shopping: #d55181; --cat-car: #c98500;
+    --cat-housing: #9085e9; --cat-utilities: #199e70; --cat-travel: #3987e5; --cat-health: #e66767;
+    --cat-other: #6b7580;
+  }
+  :root:not([data-theme="light"]) .shell { --area: #7fa4cf; --area-ink: #a9c4e4; }
+  :root:not([data-theme="light"]) .shell[data-area="money"] { --area: #4fb3a6; --area-ink: #7fd0c4; }
+  :root:not([data-theme="light"]) .shell[data-area="tax"] { --area: #b88ac5; --area-ink: #d2afdc; }
+  :root:not([data-theme="light"]) .shell[data-area="analysis"] { --area: #8f96ec; --area-ink: #b4b9f3; }
+}
+:root[data-theme="dark"] {
+  --cat-eat: #d95926; --cat-groceries: #008300; --cat-shopping: #d55181; --cat-car: #c98500;
+  --cat-housing: #9085e9; --cat-utilities: #199e70; --cat-travel: #3987e5; --cat-health: #e66767;
+  --cat-other: #6b7580;
+}
+:root[data-theme="dark"] .shell { --area: #7fa4cf; --area-ink: #a9c4e4; }
+:root[data-theme="dark"] .shell[data-area="money"] { --area: #4fb3a6; --area-ink: #7fd0c4; }
+:root[data-theme="dark"] .shell[data-area="tax"] { --area: #b88ac5; --area-ink: #d2afdc; }
+:root[data-theme="dark"] .shell[data-area="analysis"] { --area: #8f96ec; --area-ink: #b4b9f3; }
+
+.shell { --area-wash: color-mix(in srgb, var(--area) 9%, var(--surface)); --area-tint: color-mix(in srgb, var(--area) 5%, var(--paper)); }
+
+/* Rail: each area label carries its colour; the active page is marked in it. */
+.rail-area[data-area="overview"] { --dot: #24476b; }
+.rail-area[data-area="money"] { --dot: #17766c; }
+.rail-area[data-area="tax"] { --dot: #7b4588; }
+.rail-area[data-area="analysis"] { --dot: #4c55c9; }
+.rail-area > a::before {
+  content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 2px;
+  background: var(--dot); margin-right: 8px; vertical-align: 1px;
+}
+.rail a[data-status="active"] { box-shadow: inset 3px 0 0 var(--area); color: var(--area-ink); background: var(--area-wash); }
+
+/* Page head: a coloured band so each area reads at a glance. */
+.page-head, .area-band {
+  border-top: 4px solid var(--area);
+  padding-top: 16px;
+}
+h1 { color: var(--area-ink); }
+.section-head { border-bottom: 2px solid color-mix(in srgb, var(--area) 55%, var(--rule)); }
+.section-head h2 { color: var(--area-ink); }
+
+/* Figures become tinted blocks with an accent edge, not bare text. */
+.figures { border: 0; gap: 12px; }
+.figure, .figure + .figure {
+  background: var(--area-wash);
+  border: 0;
+  border-left: 3px solid var(--area);
+  border-radius: 0 var(--radius-panel) var(--radius-panel) 0;
+  padding: 12px 16px;
+}
+.figure-label { color: var(--ink-2); }
+
+/* Tables: tinted header, light banding so a row is easy to follow across. */
+table.ledger th { background: var(--area-tint); border-bottom: 2px solid color-mix(in srgb, var(--area) 40%, var(--rule)); }
+table.ledger tbody tr:nth-child(even) td { background: color-mix(in srgb, var(--area) 3%, transparent); }
+table.ledger tr.total td { background: var(--area-wash); }
+table.ledger tr.group td { background: color-mix(in srgb, var(--area) 14%, var(--surface)); color: var(--area-ink); }
+
+.segmented button[aria-pressed="true"] { background: var(--area); color: #fff; }
+button.quiet, a { color: var(--area-ink); }
+:focus-visible { outline-color: var(--area); }
+
+/* Category marks: a dot beside a name, and bars/meters in the category colour. */
+.cat-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 7px; flex: none; vertical-align: 0; }
+.cat-cell { display: flex; align-items: center; }
+.meter-fill.cat { background: var(--cat, var(--ink-2)); }
+.meter.over .meter-fill.cat { background: var(--owe); }
+
+/* Position statement on the overview gets the area colour for its figures. */
+.position strong { color: var(--area-ink); }
+.position strong.money.owe { color: var(--owe); }
