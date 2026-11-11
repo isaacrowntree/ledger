@@ -1162,13 +1162,22 @@ def api_ato_return():
               AND t.is_transfer = 0
         """, (fy_start, fy_end, biz_name)).fetchone()["total"]
 
-        # Depreciation
+        # Depreciation: figures written into tax.yaml win (they match lodged
+        # returns); for any other year, the asset register's decline in value.
         dep_total = 0
+        from_config = False
         for sched in tax_config.get("depreciation_schedules", []):
             if sched.get("business") == biz_name and sched.get("type") == "business":
                 for item in sched.get("items", []):
                     if item.get("fy") == fy_int:
                         dep_total += item["amount"]
+                        from_config = True
+        if not from_config:
+            register = depreciation_calc.load_depreciation(DEPRECIATION_CONFIG_PATH)
+            for reg in register["registers"]:
+                if reg.get("kind") == "business" and reg.get("owner") == biz_name:
+                    dep_total += reg["totals"].get(fy_int, {}).get("taxpayer_deductible", 0.0)
+            dep_total = round(dep_total, 2)
 
         net = biz_income + biz_expenses - dep_total  # expenses are negative
 

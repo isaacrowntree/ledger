@@ -84,8 +84,29 @@ def apply_splits(
         write_splits(conn, txn_id, amount, splits)
 
 
-def backfill_splits(conn: sqlite3.Connection, tax_config: dict, fy: Optional[int] = None) -> int:
-    """Backfill splits for existing transactions. Returns count of splits created."""
+def is_asset_purchase(date: str, amount: float, asset_payments: list[dict], days: int = 7) -> bool:
+    """True when a transaction is the payment for a registered depreciating asset.
+
+    Such a purchase is claimed as decline in value over the asset's life
+    (config/depreciation.yaml), so allocating it to the business as well
+    would claim the same cost twice. Matched on amount, within `days` of the
+    recorded payment date to allow for card posting lag.
+    """
+    from datetime import date as _d
+    when = _d.fromisoformat(date[:10])
+    return any(
+        abs(abs(amount) - p["amount"]) < 0.005
+        and abs((when - _d.fromisoformat(p["date"][:10])).days) <= days
+        for p in asset_payments
+    )
+
+
+def backfill_splits(conn: sqlite3.Connection, tax_config: dict, fy: Optional[int] = None,
+                    asset_payments: Optional[list[dict]] = None) -> int:
+    """Backfill splits for existing transactions. Returns count of splits created.
+
+    Payments for registered depreciating assets are skipped (see is_asset_purchase).
+    """
     fy_int = fy or tax_config.get("financial_year", 2025)
     fy_start = f"{fy_int - 1}-07-01"
     fy_end = f"{fy_int}-06-30"
@@ -99,7 +120,7 @@ def backfill_splits(conn: sqlite3.Connection, tax_config: dict, fy: Optional[int
 
     # Get all transactions in the FY with their categories and tags
     rows = conn.execute("""
-        SELECT t.id, t.amount, c.name as category_name
+        SELECT t.id, t.date, t.amount, c.name as category_name
         FROM transactions t
         LEFT JOIN categories c ON t.category_id = c.id
         WHERE t.date >= ? AND t.date <= ?
@@ -111,6 +132,8 @@ def backfill_splits(conn: sqlite3.Connection, tax_config: dict, fy: Optional[int
         txn_id = row["id"]
         amount = row["amount"]
         category_name = row["category_name"]
+        if asset_payments and is_asset_purchase(row["date"], amount, asset_payments):
+            continue
 
         # Get tags for this transaction
         tag_rows = conn.execute(

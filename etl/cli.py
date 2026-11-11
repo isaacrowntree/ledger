@@ -563,7 +563,9 @@ def cmd_split(backfill: bool = False, fy: int | None = None):
     db.init_db(conn)
     effective_fy = fy or tax_config.get("financial_year", 2025)
     print(f"Backfilling splits for FY {effective_fy - 1}-{str(effective_fy)[2:]}...")
-    count = backfill_splits(conn, tax_config, fy=effective_fy)
+    from etl.depreciation import asset_payments
+    payments = asset_payments(CONFIG_DIR / "depreciation.yaml")
+    count = backfill_splits(conn, tax_config, fy=effective_fy, asset_payments=payments)
     conn.close()
     print(f"Created {count} splits.")
 

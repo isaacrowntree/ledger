@@ -102,3 +102,25 @@ class TestBackfillSplits:
         rows = conn.execute("SELECT * FROM transaction_splits").fetchall()
         assert len(rows) >= 1
         assert rows[0]["business_name"] == "Test Business"
+
+
+class TestRegisteredAssetsAreNotExpensed:
+    """A purchase in the depreciation register is claimed as decline in value
+    over its life. Allocating its payment to the business as well claimed the
+    same cost twice (FY2026: a $5,000 camera body was expensed in full and
+    depreciated)."""
+
+    def test_asset_payment_is_skipped_but_running_costs_are_split(self, conn, tax_config):
+        account_id = db.ensure_account(conn, "Card", "test")
+        cat_id = db.ensure_category(conn, "Business: Equipment")
+        db.insert_transaction(conn, account_id, "2024-11-03", "CAMERA STORE", -1000.00, None, None, 0,
+                              cat_id, 1.0, None, "test", "h_lens", "t.csv", "{}")
+        db.insert_transaction(conn, account_id, "2024-11-05", "CAMERA HIRE", -290.40, None, None, 0,
+                              cat_id, 1.0, None, "test", "h_hire", "t.csv", "{}")
+        conn.commit()
+        # Paid 1 Nov, posted to the card 3 Nov: within the posting-lag window.
+        count = backfill_splits(conn, tax_config, fy=2025,
+                                asset_payments=[{"date": "2024-11-01", "amount": 1000.00}])
+        assert count == 1
+        rows = conn.execute("SELECT t.description FROM transaction_splits s JOIN transactions t ON t.id = s.transaction_id").fetchall()
+        assert [r["description"] for r in rows] == ["CAMERA HIRE"]

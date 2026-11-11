@@ -54,8 +54,13 @@ export function Depreciation() {
                         {reg.assets.map((a) => {
                           const y = a.years.find((yr) => yr.fy === fy);
                           if (!y) {
+                            const sold = a.years.find((yr) => yr.disposed)?.disposed;
                             return <tr key={a.description}><td>{a.description}</td>
-                              <td colSpan={joint ? 6 : 5} className="muted">Not held this year (acquired {displayDate(a.acquired)})</td></tr>;
+                              <td colSpan={joint ? 6 : 5} className="muted">
+                                {sold && sold < `${fy}-07-01`
+                                  ? `Sold ${displayDate(sold)}`
+                                  : `Not held this year (acquired ${displayDate(a.acquired)})`}
+                              </td></tr>;
                           }
                           return (
                             <tr key={a.description}>

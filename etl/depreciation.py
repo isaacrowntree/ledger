@@ -8,6 +8,7 @@ deductible decline in value this FY" and "what's the opening value next FY".
 Like etl.ato_returns, nothing here is recomputed from transactions — these are the
 tool's calculated figures.
 """
+from datetime import date
 from pathlib import Path
 
 import yaml
@@ -15,6 +16,62 @@ import yaml
 
 def _round(x: float) -> float:
     return round(float(x or 0.0), 2)
+
+
+def dv_schedule(cost: float, acquired: date, effective_life: float, taxable_use_pct: float = 100) -> list[dict]:
+    """Diminishing-value decline, year by year, the way the ATO depreciation tool works it out.
+
+    Rate is 200% / effective life. The first year counts the days held from
+    the acquisition date to 30 June, inclusive, over the days in that
+    financial year. Each year is rounded to cents, and once less than $1
+    would be left, the rest is written off.
+    """
+    rate = 2.0 / effective_life
+    fy = acquired.year + 1 if acquired.month >= 7 else acquired.year
+    fy_start, fy_end = date(fy - 1, 7, 1), date(fy, 6, 30)
+    fraction = ((fy_end - acquired).days + 1) / ((fy_end - fy_start).days + 1)
+    years, opening = [], round(float(cost), 2)
+    while opening > 0:
+        decline = round(opening * rate * fraction, 2)
+        if opening - decline < 1.0:
+            decline = opening
+        closing = round(opening - decline, 2)
+        years.append({"fy": fy, "opening": opening, "decline": decline,
+                      "deductible": round(decline * taxable_use_pct / 100, 2), "closing": closing})
+        opening, fy, fraction = closing, fy + 1, 1.0
+    return years
+
+
+def _live_years(asset: dict) -> list[dict]:
+    """The asset's years, computed when not given, and none after it was disposed of."""
+    years = asset.get("years")
+    if not years and asset.get("method", "DV") == "DV" and asset.get("cost") and asset.get("acquired"):
+        acquired = asset["acquired"]
+        acquired = acquired if isinstance(acquired, date) else date.fromisoformat(str(acquired))
+        years = dv_schedule(asset["cost"], acquired, asset["effective_life"], asset.get("taxable_use_pct", 100))
+    out = []
+    for yr in years or []:
+        out.append(yr)
+        if yr.get("disposed"):
+            break  # a sold asset has no decline after the year it went
+    asset["years"] = out
+    return out
+
+
+def asset_payments(config_path: Path) -> list[dict]:
+    """The payments that bought registered assets ({date, amount} under each
+    asset's `paid:`). Their cost is claimed as decline in value over the
+    asset's life, so these payments must not also be claimed as an expense."""
+    if not Path(config_path).exists():
+        return []
+    data = yaml.safe_load(Path(config_path).read_text()) or {}
+    out = []
+    for reg in data.get("registers", []) or []:
+        for asset in reg.get("assets", []) or []:
+            for p in asset.get("paid", []) or []:
+                out.append({"date": str(p["date"]), "amount": abs(float(p["amount"])),
+                            "asset": asset.get("description", "")})
+    return out
 
 
 def load_depreciation(config_path: Path) -> dict:
@@ -43,7 +100,7 @@ def load_depreciation(config_path: Path) -> dict:
         share = pct / 100.0
         totals: dict[int, dict] = {}
         for asset in reg.get("assets", []) or []:
-            for yr in asset.get("years", []) or []:
+            for yr in _live_years(asset):
                 fy = yr.get("fy")
                 if fy is None:  # tolerate a malformed/partial year row
                     continue

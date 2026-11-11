@@ -102,3 +102,67 @@ def test_non_dict_top_level_yields_empty(tmp_path):
     p = tmp_path / "d.yaml"
     p.write_text("- just\n- a\n- list\n")
     assert load_depreciation(p) == {"registers": [], "fy_totals": {}}
+
+
+# --- Diminishing value worked out from cost, date and effective life ---------
+
+from datetime import date  # noqa: E402
+
+from etl.depreciation import dv_schedule  # noqa: E402
+
+
+def test_dv_first_year_is_part_year_from_the_acquisition_date():
+    # Matches the ATO depreciation tool's figures for real assets: a $1,000 lens
+    # bought 17 Nov 2024, 10-year life, and a $1,000 lens, 12-year life.
+    assert dv_schedule(791.0, date(2024, 11, 17), 10)[0]["decline"] == 97.95
+    assert dv_schedule(736.0, date(2024, 11, 17), 12)[0]["decline"] == 75.95
+
+
+def test_dv_later_years_are_full_and_the_tail_is_written_off():
+    years = dv_schedule(1000.0, date(2026, 7, 1), 5)
+    assert years[0] == {"fy": 2027, "opening": 1000.0, "decline": 400.0, "deductible": 400.0, "closing": 600.0}
+    assert years[1]["decline"] == 240.0
+    assert years[-1]["closing"] == 0.0
+    assert all(y["closing"] >= 1.0 for y in years[:-1])
+    assert round(sum(y["decline"] for y in years), 2) == 1000.0
+
+
+def test_dv_deductible_follows_business_use():
+    assert dv_schedule(1000.0, date(2026, 7, 1), 5, taxable_use_pct=50)[0]["deductible"] == 200.0
+
+
+def test_register_works_out_years_when_none_are_given(tmp_path):
+    cfg = tmp_path / "depreciation.yaml"
+    cfg.write_text("""
+registers:
+  - owner: "Biz"
+    kind: business
+    assets:
+      - description: "Lens"
+        cost: 1000.0
+        acquired: "2026-07-01"
+        method: DV
+        effective_life: 5
+""")
+    reg = load_depreciation(cfg)["registers"][0]
+    assert reg["totals"][2027]["deductible"] == 400.0
+    assert reg["totals"][2028]["deductible"] == 240.0
+
+
+def test_nothing_is_claimed_after_an_asset_is_sold(tmp_path):
+    cfg = tmp_path / "depreciation.yaml"
+    cfg.write_text("""
+registers:
+  - owner: "Biz"
+    kind: business
+    assets:
+      - description: "Camera, sold"
+        cost: 1000.0
+        acquired: "2024-07-01"
+        years:
+          - { fy: 2025, opening: 1000.0, decline: 400.0, deductible: 400.0, closing: 600.0 }
+          - { fy: 2026, opening: 600.0, decline: 100.0, deductible: 100.0, closing: 0.0, disposed: "2025-10-01" }
+          - { fy: 2027, opening: 300.0, decline: 120.0, deductible: 120.0, closing: 180.0 }
+""")
+    totals = load_depreciation(cfg)["registers"][0]["totals"]
+    assert 2026 in totals and 2027 not in totals

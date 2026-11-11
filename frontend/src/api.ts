@@ -294,6 +294,10 @@ export interface DepreciationYear {
   decline: number;
   deductible: number;
   closing: number;
+  /** Set on the year the asset was sold or scrapped; no later years follow. */
+  disposed?: string;
+  proceeds?: number;
+  balancing_adjustment?: number;
 }
 
 export interface DepreciationAsset {
