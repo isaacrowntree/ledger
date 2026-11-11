@@ -42,7 +42,23 @@ DEFAULTS = {
     "alcohol_tax_share": 0.25,
     # NSW duty on general insurance premiums (car, home); health is exempt.
     "insurance_duty_rate": 0.09,
+    # Tobacco excise and GST as a share of the retail price.
+    "tobacco_tax_share": 0.65,
+    # Passenger movement charge, per departure from Australia.
+    "passenger_movement_charge": 70.0,
 }
+
+# Lines that appear only once matching purchases exist. Each is driven by a
+# tag (see tag_rules in config/categories.yaml), so a purchase is counted as
+# soon as the tagger recognises it -- nothing has to be switched on.
+#   tag             line name                         how                      kind
+TAGGED = [
+    ("tobacco",     "Tobacco excise",                 "share:tobacco_tax_share", "tax"),
+    ("stamp-duty",  "Stamp duty",                     "actual",                  "tax"),
+    ("fines",       "Fines and court fees",           "actual",                  "charge"),
+    ("passport",    "Passport and visa fees",         "actual",                  "charge"),
+    ("intl-flight", "Passenger movement charge",      "per:passenger_movement_charge", "tax"),
+]
 
 
 @dataclass
@@ -136,6 +152,25 @@ def estimate(conn: sqlite3.Connection, date_from: str, date_to: str, config: dic
     if rego > 0:
         lines.append(Line("Vehicle registration", rego, "Paid to Service NSW, from your transactions. "
                           "Includes the compulsory third-party insurance bundled with it.", False, "tax"))
+
+    for tag, name, how, kind in TAGGED:
+        spent = by_tag.get(tag, 0.0)
+        if spent <= 0:
+            continue
+        if how == "actual":
+            lines.append(Line(name, spent, "From your transactions.", False, kind))
+        elif how.startswith("share:"):
+            rate = cfg[how.split(":", 1)[1]]
+            lines.append(Line(name, spent * rate,
+                              f"About {rate:.0%} of the ${spent:,.0f} spent.", True, kind))
+        elif how.startswith("per:"):
+            each = cfg[how.split(":", 1)[1]]
+            n = conn.execute("""
+                SELECT COUNT(*) FROM transactions t JOIN transaction_tags g ON g.transaction_id = t.id
+                WHERE g.tag = ? AND t.date BETWEEN ? AND ? AND t.is_transfer = 0 AND t.amount < 0
+                """, (tag, date_from, date_to)).fetchone()[0]
+            lines.append(Line(name, n * each, f"${each:.0f} built into each of {n} international "
+                              f"flight booking{'s' if n != 1 else ''}.", True, kind))
 
     if tolls > 0:
         lines.append(Line("Road tolls", tolls, "From your Linkt and e-toll charges. A charge, "

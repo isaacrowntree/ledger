@@ -73,3 +73,28 @@ def test_actual_charges_are_marked_actual_and_tolls_are_not_tax(conn, ledger):
     assert rates["estimate"] is False and rates["amount"] == 400.0
     assert tolls["kind"] == "charge"
     assert r["total"] == round(r["total_tax"] + 20.0, 2)
+
+
+def test_lines_appear_only_once_something_is_bought(conn, ledger):
+    """No tobacco, no tobacco line; one purchase and it is counted."""
+    ledger("2026-03-01", "RESTAURANT", -110.0, "Eating Out")
+    assert _line(estimate(conn, "2026-01-01", "2026-12-31"), "Tobacco excise") is None
+    ledger("2026-03-02", "TOBACCONIST", -100.0, "Eating Out", tags=["tobacco"])
+    tobacco = _line(estimate(conn, "2026-01-01", "2026-12-31", {"tobacco_tax_share": 0.6}), "Tobacco excise")
+    assert tobacco["amount"] == 60.0 and tobacco["estimate"] is True
+
+
+def test_departure_tax_per_international_flight(conn, ledger):
+    ledger("2026-03-01", "EMIRATES", -1500.0, "Eating Out", tags=["intl-flight"])
+    ledger("2026-04-01", "AIRASIA", -300.0, "Eating Out", tags=["intl-flight"])
+    pmc = _line(estimate(conn, "2026-01-01", "2026-12-31"), "Passenger movement charge")
+    assert pmc["amount"] == 140.0
+
+
+def test_fines_and_stamp_duty_are_actual_amounts(conn, ledger):
+    ledger("2026-03-01", "REVENUE NSW", -171.0, "Eating Out", tags=["fines"])
+    ledger("2026-03-02", "REVENUE NSW TRANSFER DUTY", -900.0, "Eating Out", tags=["stamp-duty"])
+    r = estimate(conn, "2026-01-01", "2026-12-31")
+    assert _line(r, "Fines and court fees")["amount"] == 171.0
+    assert _line(r, "Fines and court fees")["kind"] == "charge"
+    assert _line(r, "Stamp duty")["estimate"] is False
