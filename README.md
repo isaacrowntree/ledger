@@ -14,9 +14,9 @@ A personal finance tool that ingests bank statements from multiple Australian ba
 - **Business splits** — automatically allocate percentages of expenses to businesses for tax reporting
 - **ATO tax return view** — structured output matching Australian individual tax return sections (salary, rental, business schedule, deductions)
 - **Financial year view** — outgoing/incoming/rental/work-trip sub-tabs replacing the manual Excel spreadsheet
-- **Net worth dashboard** — accounts, credit cards, property, vehicles with statement-sourced balances
+- **Overview** — where you stand: cash against card debt, what a partner owes you, and net worth at full value and at your ownership share. Balances are the last statement's balance carried forward by later exports
 - **Shared expenses** — split household costs with a partner and track what each side owes
-- **Recurring schedules** — config-driven repayment/subscription schedules with their own dashboard tab
+- **Recurring schedules** — config-driven repayment/subscription schedules with their own page
 - **Depreciation register** — business assets and their per-FY decline in value
 - **Capital gains** — CommSec contract notes parsed into a CGT schedule
 - **Lodgement archive** — previously lodged returns kept alongside the computed ones
@@ -51,9 +51,10 @@ mkdir -p staging/ing staging/paypal
 # Drop your PDF/CSV statements into the appropriate folders
 ledger ingest
 
-# Start the dashboard
+# Build the dashboard once, then start it
+(cd frontend && npm install && npm run build)
 python -m api
-# Open http://localhost:5050
+# Open http://127.0.0.1:5050
 ```
 
 ## Supported formats
@@ -224,11 +225,12 @@ lag, so a row dated before a statement's end can appear on the next one.
 
 ## API endpoints
 
-The Flask API serves data to the dashboard at `http://localhost:5050`.
+The Flask API serves data to the dashboard at `http://127.0.0.1:5050`.
 
 | Endpoint | Description |
 |----------|-------------|
 | `GET /api/transactions` | All transactions with filters |
+| `GET /api/summary/period` | Income, spending and categories for a date range — the one definition every page's totals use |
 | `GET /api/summary/monthly` | Monthly income vs expenses |
 | `GET /api/summary/category` | Spending by category |
 | `GET /api/spreadsheet/outgoing?fy=2025` | FY expenses with business splits |
@@ -271,11 +273,11 @@ etl/                 # Extract-Transform-Load pipeline
 api/                 # Flask REST API
   server.py          # All endpoints
 
-frontend/            # Vite + TypeScript dashboard
-  src/main.ts        # Dashboard, transactions, budget, trends, tax views
-  src/spreadsheet.ts # Financial year view (outgoing/incoming/rental/trips)
-  src/charts.ts      # Chart rendering
-  src/filters.ts     # Shared filter state
+frontend/            # React dashboard (Vite, TanStack Router/Query/Table), client-side only
+  src/router.tsx     # Four areas: Overview, Money, Tax, Analysis
+  src/views/         # One component per page
+  src/components/    # Shared UI and hand-built SVG charts
+  src/lib/           # TanStack Query hooks and formatting
   src/api.ts         # API client and types
 
 docs/                # Astro documentation site
@@ -292,8 +294,11 @@ scripts/             # Utility scripts (reingest, etc.)
 # Run tests
 python -m pytest tests/ -v
 
-# Frontend dev server (hot reload)
+# Frontend dev server (hot reload, proxies /api to 127.0.0.1:5050)
 cd frontend && npm run dev
+
+# Type-check the frontend
+cd frontend && npm run typecheck
 
 # API server (auto-reload)
 python -m api

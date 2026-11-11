@@ -123,3 +123,50 @@ class TestRunningChain:
         _add(conn, savings, "2026-02-01", "B", -20.00, "two.pdf", balance="50.00")
         report = reconcile_account(conn, savings, "Test Savings", "savings")
         assert report.chain_breaks == []
+
+
+class TestCurrentBalance:
+    """A balance is the last printed statement balance carried forward by rows
+    from later files -- never the newest row alone, never a lifetime sum."""
+
+    def test_card_carries_forward_rows_after_the_last_statement(self, conn, card):
+        from etl.reconcile import current_balance
+        _add(conn, card, "2026-01-10", "COFFEE", -100.00, "jan.pdf", closing_balance="100.00")
+        _add(conn, card, "2026-02-10", "GROCERIES", -50.00, "feb.pdf", closing_balance="150.00")
+        # An export after the statement prints no balance of its own.
+        _add(conn, card, "2026-02-14", "FUEL", -30.00, "export.csv")
+        _add(conn, card, "2026-02-15", "PAYMENT", 80.00, "export.csv")
+        b = current_balance(conn, card, "credit")
+        assert b.balance == -100.00  # owed: 150 + 30 - 80
+        assert b.anchor_file == "feb.pdf"
+        assert b.rows_after_anchor == 2
+
+    def test_late_posted_row_in_a_later_file_is_counted(self, conn, card):
+        """A row dated inside the last statement's period that posted onto a
+        LATER file is not on the statement, so it is carried forward."""
+        from etl.reconcile import current_balance
+        _add(conn, card, "2026-01-10", "COFFEE", -100.00, "jan.pdf", closing_balance="100.00")
+        _add(conn, card, "2026-01-09", "LATE POSTING", -20.00, "export.csv")
+        _add(conn, card, "2026-01-15", "LUNCH", -10.00, "export.csv")
+        assert current_balance(conn, card, "credit").balance == -130.00
+
+    def test_export_wholly_inside_the_statement_is_not_counted_again(self, conn, card):
+        """An export that ends before the last statement does covers days the
+        statement already holds; adding it would double-count them."""
+        from etl.reconcile import current_balance
+        _add(conn, card, "2026-01-10", "COFFEE", -100.00, "jan.pdf", closing_balance="100.00")
+        _add(conn, card, "2026-01-09", "COFFEE (EXPORT COPY)", -100.00, "export.csv")
+        assert current_balance(conn, card, "credit").balance == -100.00
+
+    def test_savings_adds_forward(self, conn, savings):
+        from etl.reconcile import current_balance
+        _add(conn, savings, "2026-01-31", "INTEREST", 5.00, "jan.pdf", balance="1005.00")
+        _add(conn, savings, "2026-02-03", "DEPOSIT", 100.00, "export.csv")
+        assert current_balance(conn, savings, "savings").balance == 1105.00
+
+    def test_no_statement_balances_falls_back_to_the_sum(self, conn, savings):
+        from etl.reconcile import current_balance
+        _add(conn, savings, "2026-01-31", "IN", 40.00, "export.csv")
+        _add(conn, savings, "2026-02-01", "OUT", -15.00, "export.csv")
+        b = current_balance(conn, savings, "savings")
+        assert b.balance == 25.00 and b.anchor_file is None

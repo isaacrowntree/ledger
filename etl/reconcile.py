@@ -282,3 +282,40 @@ def reconcile_account(conn: sqlite3.Connection, account_id: int, account_name: s
         if trailing:
             report.unanchored_from = anchors[-1].period_end
     return report
+
+
+@dataclass
+class CurrentBalance:
+    balance: float          # signed: negative is money owed
+    as_of: str              # date of the latest row counted
+    anchor_file: str | None  # statement the balance is carried forward from
+    rows_after_anchor: int
+
+
+def current_balance(conn: sqlite3.Connection, account_id: int,
+                    account_type: str = "checking") -> CurrentBalance:
+    """An account's balance: the latest printed statement balance, carried
+    forward by every row from files that come after it.
+
+    The newest ROW is not a reliable source on its own: a CSV export or online
+    download often prints no balance, and summing an account's whole history
+    is meaningless for a card. Rows are attributed by file, exactly as
+    reconcile does, so a row posted late onto the next statement is neither
+    lost nor counted twice.
+    """
+    owing = account_type in OWING_TYPES
+    files = _file_order(conn, account_id)
+    positions = _advancing_anchors(files)
+    if not positions:
+        total = sum(f["total"] for f in files)
+        as_of = max((f["end"] for f in files), default="")
+        return CurrentBalance(round(total, 2), as_of, None, sum(f["n"] for f in files))
+    last = positions[-1]
+    anchor = anchors_value = files[last]["anchor"] * _balance_sign(files[last]["balances"], owing)
+    after = files[last + 1:]
+    moved = sum(f["total"] for f in after)
+    # Owing accounts are anchored owing-positive; spending (negative) raises it.
+    balance = -(anchors_value - moved) if owing else anchor + moved
+    as_of = max([files[last]["end"]] + [f["end"] for f in after])
+    return CurrentBalance(round(balance, 2), as_of, files[last]["source_file"],
+                          sum(f["n"] for f in after))

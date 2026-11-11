@@ -1,3 +1,9 @@
+# Optional: a partner who sends you money for shared costs. Those transfers are
+# reported beside spending on the overview (shared bills count in full there).
+# partner:
+#   name: "Alex"
+#   patterns: ["ALEX SMITH"]
+
 accounts:
   # === Everyday / Checking Accounts ===
   # file_prefix maps statement filenames to accounts (e.g. "my_checking_2025-01.pdf")
@@ -43,6 +49,7 @@ accounts:
   #   currency: AUD
   #   account_type: loan
   #   file_prefix: my_mortgage
+  #   ownership_pct: 50          # your share of a joint loan (default 100)
 
   # === Commonwealth Bank ===
   # PDF statements only; drop them in staging/cba/ and staging/cba-cc/.

@@ -7,6 +7,7 @@ from flask_cors import CORS
 from etl import db
 from etl.cpi import sync_cpi, get_cpi_for_year, get_cpi_history, get_latest_cpi, adjust_for_inflation
 from etl.dedup import find_duplicates, resolve_duplicates
+from etl.reconcile import current_balance
 from etl.tax_calc import calculate_total_tax, get_tax_dollar_breakdown
 from etl.splitter import load_tax_config
 from etl import rental as rental_calc
@@ -65,7 +66,10 @@ def _loan_transfer_clauses(prefix="t"):
     clauses = []
     params = []
 
-    exclude_loans = request.args.get("exclude_loans", "true").lower()
+    # Loans are included by default: with transfers excluded, what remains on a
+    # loan account is its interest -- the largest single cost of a mortgage --
+    # which excluding loans silently dropped from every summary.
+    exclude_loans = request.args.get("exclude_loans", "false").lower()
     if exclude_loans == "true":
         clauses.append(f"a.account_type NOT IN ('loan')")
 
@@ -203,13 +207,17 @@ def api_accounts():
 
 @app.route("/api/accounts/summary")
 def api_accounts_summary():
-    """Return each account with name, type, and balance from last known statement balance."""
-    conn = get_conn()
-    import json
+    """Each visible account's current balance, plus holdings.
 
-    # Get account info and transaction counts (only visible accounts)
+    A balance is the latest printed statement balance carried forward by later
+    rows (etl.reconcile.current_balance). Accounts with no statement balances
+    -- PayPal, whose export prints its own running Balance -- fall back to the
+    newest row's printed balance, then to the sum of their rows.
+    """
+    import json
+    conn = get_conn()
     accounts = conn.execute("""
-        SELECT a.id, a.name, a.source_type, a.currency, a.account_type,
+        SELECT a.id, a.name, a.source_type, a.currency, a.account_type, a.ownership_pct,
                COUNT(t.id) as transaction_count
         FROM accounts a
         LEFT JOIN transactions t ON t.account_id = a.id
@@ -221,59 +229,126 @@ def api_accounts_summary():
     results = []
     for acct in accounts:
         acct_dict = dict(acct)
-        # Try to get the last known balance from raw_data (statement balance column)
-        last_raw = conn.execute("""
-            SELECT r.raw_data FROM transactions t
-            JOIN raw_imports r ON r.transaction_id = t.id
-            WHERE t.account_id = ?
-            ORDER BY t.date DESC, t.id DESC LIMIT 1
-        """, (acct["id"],)).fetchone()
-
-        balance = None
-        if last_raw:
+        current = current_balance(conn, acct["id"], acct["account_type"])
+        balance, source = current.balance, "statement"
+        if current.anchor_file is None:
+            balance, source = current.balance, "sum"
+            last_raw = conn.execute("""
+                SELECT r.raw_data FROM transactions t
+                JOIN raw_imports r ON r.transaction_id = t.id
+                WHERE t.account_id = ? ORDER BY t.date DESC, t.id DESC LIMIT 1
+            """, (acct["id"],)).fetchone()
             try:
-                raw = json.loads(last_raw["raw_data"])
-                # Try closing_balance first (credit card PDFs), then Balance (CSV), then balance (ING)
-                for key in ("closing_balance", "Balance", "balance"):
-                    bal_str = raw.get(key, "")
-                    if bal_str and str(bal_str) not in ("", "None"):
-                        bal_val = float(str(bal_str).replace(",", ""))
-                        if bal_val != 0 or key == "balance":  # ING balance of 0 is valid
-                            # Credit card closing balances are positive in statements but represent debt
-                            if acct["account_type"] == "credit" and bal_val > 0:
-                                balance = -bal_val
-                            # Loan accounts: balance from offset is positive but represents debt
-                            elif acct["account_type"] == "loan" and bal_val > 0:
-                                balance = -bal_val
-                            else:
-                                balance = bal_val
-                            break
+                raw = json.loads(last_raw["raw_data"]) if last_raw else {}
+                printed = raw.get("Balance")
+                if printed not in (None, "", "None"):
+                    balance, source = float(str(printed).replace(",", "")), "export"
             except (ValueError, TypeError):
                 pass
-
-        # Fall back to SUM(amount) for all accounts
-        if balance is None:
-            row = conn.execute(
-                "SELECT COALESCE(SUM(amount), 0) as bal FROM transactions WHERE account_id = ?",
-                (acct["id"],)
-            ).fetchone()
-            balance = row["bal"]
-
-        acct_dict["balance"] = balance
+        acct_dict["balance"] = round(balance, 2) + 0.0  # no -0.0
+        acct_dict["as_of"] = current.as_of
+        acct_dict["balance_source"] = source
         results.append(acct_dict)
 
-    # Include holdings
     holdings = conn.execute("""
-        SELECT id, asset_type, name, ticker, units, cost_basis,
+        SELECT id, asset_type, name, ticker, units, cost_basis, ownership_pct,
                COALESCE(current_value, cost_basis) as current_value, as_at_date
         FROM holdings ORDER BY asset_type, name
     """).fetchall()
+    conn.close()
+    return jsonify({"accounts": results, "holdings": [dict(h) for h in holdings]})
 
+
+@app.route("/api/summary/period")
+def api_summary_period():
+    """Income, spending and the category breakdown for a date range, from ONE
+    definition so every figure on a page agrees:
+
+    * transfers are excluded -- flagged rows and rows filed under Transfers;
+    * income is the net of income categories;
+    * spending is the net of every other category, so a refund reduces the
+      category it refunds rather than counting as income, and Uncategorized is
+      spending (shown as its own line, never dropped);
+    * loan accounts are included, which brings mortgage interest in.
+
+    Earlier the totals summed every negative and every positive amount while
+    the category table netted refunds and dropped Uncategorized, so the same
+    year showed $138k of expenses above a $117k table.
+    """
+    date_from = request.args.get("from") or "0000-01-01"
+    date_to = request.args.get("to") or "9999-12-31"
+    conn = get_conn()
+    rows = conn.execute("""
+        SELECT strftime('%Y-%m', t.date) AS month,
+               COALESCE(c.name, 'Uncategorized') AS category,
+               COALESCE(c.is_income, 0) AS is_income,
+               SUM(t.amount) AS total, COUNT(*) AS count
+        FROM transactions t
+        JOIN accounts a ON a.id = t.account_id
+        LEFT JOIN categories c ON c.id = t.category_id
+        WHERE t.date BETWEEN ? AND ? AND t.is_transfer = 0
+          AND COALESCE(c.name, '') <> 'Transfers'
+        GROUP BY month, category
+    """, (date_from, date_to)).fetchall()
+
+    # A partner's contributions to shared costs: transfers, so never income,
+    # but reported so the overview can show your own position.
+    with open(CONFIG_DIR / "accounts.yaml") as f:
+        partner = (yaml.safe_load(f) or {}).get("partner") or {}
+    contributions, partner_months = 0.0, {}
+    if partner.get("patterns"):
+        like = " OR ".join("UPPER(t.description) LIKE ?" for _ in partner["patterns"])
+        for r in conn.execute(f"""
+            SELECT strftime('%Y-%m', t.date) AS month, SUM(t.amount) AS total
+            FROM transactions t JOIN accounts a ON a.id = t.account_id
+            WHERE t.date BETWEEN ? AND ? AND t.amount > 0 AND t.is_transfer = 1
+              AND a.account_type IN ('checking', 'savings') AND ({like})
+            GROUP BY month""", (date_from, date_to,
+                                *[f"%{p.upper()}%" for p in partner["patterns"]])):
+            partner_months[r["month"]] = r["total"]
+            contributions += r["total"]
     conn.close()
 
+    months: dict[str, dict] = {}
+    cats: dict[str, dict] = {}
+    for r in rows:
+        m = months.setdefault(r["month"], {"month": r["month"], "income": 0.0, "spending": 0.0})
+        c = cats.setdefault(r["category"], {"category": r["category"], "is_income": r["is_income"],
+                                            "total": 0.0, "count": 0})
+        c["total"] += r["total"]
+        c["count"] += r["count"]
+        if r["is_income"]:
+            m["income"] += r["total"]
+        else:
+            m["spending"] -= r["total"]
+
+    income = sum(m["income"] for m in months.values())
+    spending = sum(m["spending"] for m in months.values())
+    net = income - spending
+    for month, total in partner_months.items():
+        months.setdefault(month, {"month": month, "income": 0.0, "spending": 0.0})
+    for m in months.values():
+        m["income"], m["spending"] = round(m["income"], 2), round(m["spending"], 2)
+        m["partner"] = round(partner_months.get(m["month"], 0.0), 2)
+    for c in cats.values():
+        c["total"] = round(c["total"], 2)
     return jsonify({
-        "accounts": results,
-        "holdings": [dict(h) for h in holdings],
+        "from": date_from, "to": date_to,
+        "months": sorted(months.values(), key=lambda m: m["month"]),
+        # Month x category, on the same definition, for small multiples.
+        "series": [{"month": r["month"], "category": r["category"], "is_income": r["is_income"],
+                    "total": round(r["total"], 2)} for r in rows],
+        "categories": sorted(cats.values(), key=lambda c: c["total"]),
+        "totals": {
+            "income": round(income, 2), "spending": round(spending, 2), "net": round(net, 2),
+            # Share of income not spent. Mortgage principal is a transfer to the
+            # loan, so it is saving here; its interest is spending.
+            "savings_rate": round(net / income * 100, 1) if income > 0 else None,
+            "months": len(months),
+            "partner_name": partner.get("name"),
+            "partner_contributions": round(contributions, 2),
+            "net_with_partner": round(net + contributions, 2),
+        },
     })
 
 
@@ -364,7 +439,10 @@ def api_budget_vs_actual():
         "SELECT id, name, budget_monthly, is_income FROM categories WHERE budget_monthly IS NOT NULL"
     ).fetchall()
 
-    exclude_loans = request.args.get("exclude_loans", "true").lower() == "true"
+    # Loans are included by default: with transfers excluded, what remains on a
+    # loan account is its interest -- the largest single cost of a mortgage --
+    # which excluding loans silently dropped from every summary.
+    exclude_loans = request.args.get("exclude_loans", "false").lower() == "true"
     exclude_transfers = request.args.get("exclude_transfers", "true").lower() == "true"
     cpi_adjust = request.args.get("cpi_adjust", "false").lower() == "true"
 

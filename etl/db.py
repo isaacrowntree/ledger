@@ -167,8 +167,22 @@ def get_connection(db_path: Optional[Path] = None) -> sqlite3.Connection:
     return conn
 
 
+# Columns added after the first release. CREATE TABLE IF NOT EXISTS leaves an
+# existing table alone, so each is added here when missing.
+MIGRATIONS = [
+    # Your share of a jointly owned asset or debt (a 50/50 property and its
+    # mortgage). Net worth shows both the household figure and your share.
+    ("accounts", "ownership_pct", "REAL NOT NULL DEFAULT 100"),
+    ("holdings", "ownership_pct", "REAL NOT NULL DEFAULT 100"),
+]
+
+
 def init_db(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA)
+    for table, column, decl in MIGRATIONS:
+        cols = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
+        if column not in cols:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
     conn.commit()
 
 
@@ -268,4 +282,8 @@ def load_accounts_from_config(conn: sqlite3.Connection, config_path: Path) -> No
     with open(config_path) as f:
         config = yaml.safe_load(f)
     for acct in config.get("accounts", []):
-        ensure_account(conn, acct["name"], acct["source_type"], acct.get("currency", "AUD"), acct.get("account_type", "checking"), acct.get("display", 1))
+        account_id = ensure_account(conn, acct["name"], acct["source_type"], acct.get("currency", "AUD"), acct.get("account_type", "checking"), acct.get("display", 1))
+        if "ownership_pct" in acct:
+            conn.execute("UPDATE accounts SET ownership_pct = ? WHERE id = ?",
+                         (float(acct["ownership_pct"]), account_id))
+    conn.commit()

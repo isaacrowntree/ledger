@@ -1,5 +1,15 @@
 const BASE = "/api";
 
+// Fetch failures throw, so TanStack Query surfaces them as errors instead of a
+// page silently rendering an error body as if it were data.
+async function checked<T>(res: Response): Promise<T> {
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`${res.status} ${res.statusText}${body ? `: ${body.slice(0, 200)}` : ""}`);
+  }
+  return res.json();
+}
+
 async function get<T>(path: string, params?: Record<string, string>): Promise<T> {
   const url = new URL(path, window.location.origin);
   if (params) {
@@ -7,17 +17,15 @@ async function get<T>(path: string, params?: Record<string, string>): Promise<T>
       if (v) url.searchParams.set(k, v);
     });
   }
-  const res = await fetch(url.toString());
-  return res.json();
+  return checked<T>(await fetch(url.toString()));
 }
 
 async function patch<T>(path: string, body: Record<string, unknown>): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
+  return checked<T>(await fetch(`${BASE}${path}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
-  });
-  return res.json();
+  }));
 }
 
 export interface Transaction {
@@ -59,7 +67,10 @@ export interface AccountSummary {
   source_type: string;
   currency: string;
   account_type: string;
-  balance: number;
+  balance: number;            // signed: negative is owed
+  ownership_pct: number;      // your share of a joint account (a 50/50 mortgage)
+  as_of: string;
+  balance_source: "statement" | "export" | "sum";
   transaction_count: number;
 }
 
@@ -71,12 +82,32 @@ export interface Holding {
   units: number;
   cost_basis: number;
   current_value: number;
+  ownership_pct: number;
   as_at_date: string | null;
 }
 
 export interface AccountsSummaryResponse {
   accounts: AccountSummary[];
   holdings: Holding[];
+}
+
+/** One consistent definition of income and spending for a date range. */
+export interface PeriodSummary {
+  from: string;
+  to: string;
+  months: { month: string; income: number; spending: number; partner: number }[];
+  series: { month: string; category: string; is_income: number; total: number }[];
+  categories: { category: string; is_income: number; total: number; count: number }[];
+  totals: {
+    income: number;
+    spending: number;
+    net: number;
+    savings_rate: number | null;
+    months: number;
+    partner_name: string | null;
+    partner_contributions: number;
+    net_with_partner: number;
+  };
 }
 
 export interface MonthlySummary {
@@ -354,17 +385,15 @@ export interface ATOReturn {
 }
 
 async function post<T>(path: string, body: Record<string, unknown>): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
+  return checked<T>(await fetch(`${BASE}${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
-  });
-  return res.json();
+  }));
 }
 
 async function del<T>(path: string): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, { method: "DELETE" });
-  return res.json();
+  return checked<T>(await fetch(`${BASE}${path}`, { method: "DELETE" }));
 }
 
 export interface SharedExpenseItem {
@@ -494,6 +523,9 @@ export const api = {
   accounts: () => get<Account[]>(`${BASE}/accounts`),
 
   accountsSummary: () => get<AccountsSummaryResponse>(`${BASE}/accounts/summary`),
+
+  period: (from: string, to: string) =>
+    get<PeriodSummary>(`${BASE}/summary/period`, { from, to }),
 
   monthlySummary: (year?: string, params?: Record<string, string>) =>
     get<MonthlySummary[]>(`${BASE}/summary/monthly`, { ...params, ...(year ? { year } : {}) }),
