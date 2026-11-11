@@ -153,7 +153,7 @@ function WorkTrips({ data }: { data: WorkTripsResponse }) {
           </table>
         </Section>
       ))}
-      <Section title="Working from home" aside={`ATO fixed rate, $${data.wfh.rate_per_hour} an hour`}>
+      <Section title="Working from home" aside={`ATO fixed rate, $${data.wfh.rate_per_hour.toFixed(2)} an hour`}>
         <table className="ledger" style={{ maxWidth: 560 }}>
           <tbody>
             <tr><td>Weeks worked from home</td><td className="num">{data.wfh.weeks}</td></tr>

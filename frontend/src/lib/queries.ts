@@ -44,6 +44,10 @@ export const useEconomics = (year: string) =>
 export const useSpreadsheet = (tab: "outgoing" | "incoming" | "rental" | "work-trips", fy: string) =>
   useQuery({
     queryKey: ["spreadsheet", tab, fy],
+    // The four tabs return different shapes. Keeping the previous data while
+    // the next loads is only safe for the SAME tab (a year change); carried
+    // across tabs, the Rental view was handed transaction rows and crashed.
+    placeholderData: (prev, prevQuery) => (prevQuery?.queryKey[1] === tab ? prev : undefined),
     queryFn: (): Promise<unknown> => {
       switch (tab) {
         case "outgoing": return api.spreadsheetOutgoing(fy);
