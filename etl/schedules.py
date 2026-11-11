@@ -96,7 +96,15 @@ def _matched_payments(conn: sqlite3.Connection, start: date, settle: dict) -> li
     if not tag and not category:
         return []
 
-    clauses = ["t.amount > 0", "t.is_transfer = 0", "t.date >= ?"]
+    # A partner's payment is a transfer between people, and the ledger flags it
+    # so -- requiring is_transfer = 0 meant a tagged payment could never match
+    # (12 fortnights showed "0 payments matched" against 20 tagged transfers).
+    # A tag is an explicit choice, so it counts either way. Matching by category
+    # alone still skips transfers, so money moved between your own accounts
+    # under that category is not taken as a payment.
+    clauses = ["t.amount > 0", "t.date >= ?"]
+    if not tag:
+        clauses.insert(1, "t.is_transfer = 0")
     params: list = [start.isoformat()]
     join = ""
     if tag:
