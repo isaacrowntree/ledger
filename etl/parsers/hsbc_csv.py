@@ -66,6 +66,14 @@ class HSBCCSVParser(BaseParser):
         if not date:
             return None
 
+        # A blank Posting Date means the charge is still pending: its amount can
+        # change or the hold can drop off, and once it settles the next export
+        # repeats it -- with a posting date -- so taking it now double-counts.
+        # Only the "Posting Date" column's PRESENCE with an empty value marks
+        # pending; an export without that column is taken as settled.
+        if "Posting Date" in row and not row.get("Posting Date"):
+            return None
+
         description = row.get("Description", "")
         # HSBC pads descriptions out to fixed columns; collapse the runs of spaces.
         description = " ".join(description.split())

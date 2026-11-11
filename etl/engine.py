@@ -152,13 +152,9 @@ def ingest_statement(
             continue
 
         txn = as_raw_transaction(statement, row)
-
-        if payment_patterns and _is_payment_to_source_of_truth(
-                txn, payment_patterns, source_of_truth_types or set()):
-            category_id, confidence, is_transfer = transfers_cat_id, 1.0, True
-        else:
-            category_id, confidence = categorizer.categorize(txn)
-            is_transfer = _category_name(conn, category_id) == "Transfers"
+        category_id, confidence, is_transfer = classify(
+            conn, txn, categorizer, payment_patterns, source_of_truth_types,
+            transfers_cat_id)
 
         if dry_run:
             result.inserted += 1
@@ -185,6 +181,24 @@ def ingest_statement(
         result.inserted += 1
 
     return result
+
+
+def classify(conn: sqlite3.Connection, txn: RawTransaction, categorizer: Categorizer,
+             payment_patterns: list[re.Pattern] | None = None,
+             source_of_truth_types: set[str] | None = None,
+             transfers_cat_id: int | None = None) -> tuple[int | None, float | None, bool]:
+    """(category_id, confidence, is_transfer) for a new row.
+
+    One rule for every path that inserts rows, so a repair script cannot file a
+    card payment as spending where an ordinary ingest would mark it a transfer.
+    """
+    if payment_patterns and _is_payment_to_source_of_truth(
+            txn, payment_patterns, source_of_truth_types or set()):
+        if transfers_cat_id is None:
+            transfers_cat_id = db.get_category_id(conn, "Transfers")
+        return transfers_cat_id, 1.0, True
+    category_id, confidence = categorizer.categorize(txn)
+    return category_id, confidence, _category_name(conn, category_id) == "Transfers"
 
 
 def _category_name(conn: sqlite3.Connection, category_id: int | None) -> str:
