@@ -1,8 +1,12 @@
 from pathlib import Path
 
 import yaml
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, abort, jsonify, request, send_from_directory
 from flask_cors import CORS
+from werkzeug.exceptions import HTTPException
+
+from api import schemas
+from api.schemas import body, sql_value
 
 from etl import db
 from etl.cpi import sync_cpi, get_cpi_for_year, get_cpi_history, get_latest_cpi, adjust_for_inflation
@@ -30,6 +34,12 @@ DEPRECIATION_CONFIG_PATH = CONFIG_DIR / "depreciation.yaml"
 COMMSEC_NOTES_DIR = PROJECT_ROOT / "staging" / "commsec"
 
 app = Flask(__name__, static_folder=str(FRONTEND_DIST), static_url_path="")
+
+
+@app.errorhandler(HTTPException)
+def _http_error(e: HTTPException):
+    """API errors as JSON, saying what was wrong, rather than an HTML page."""
+    return jsonify({"error": e.description}), e.code
 CORS(app)
 
 
@@ -90,98 +100,143 @@ def index():
 
 # --- API ---
 
+def _transaction_filters():
+    """WHERE clauses for the transaction list and its totals, from query args.
+
+    from/to, category, account, tag, search (description), direction (in|out),
+    min/max (on the absolute amount), shared=1, review=1 (recent: imported in the last 30
+    days, dated in the last 60, and never confirmed by hand), transfers=1 to include transfers.
+    """
+    a = request.args
+    clauses, params = ["1=1"], []
+    if a.get("from"):
+        clauses.append("t.date >= ?"); params.append(a["from"])
+    if a.get("to"):
+        clauses.append("t.date <= ?"); params.append(a["to"])
+    if a.get("category"):
+        clauses.append("COALESCE(c.name, 'Uncategorized') = ?"); params.append(a["category"])
+    if a.get("account"):
+        clauses.append("a.name = ?"); params.append(a["account"])
+    if a.get("search"):
+        clauses.append("(t.description LIKE ? OR COALESCE(t.notes, '') LIKE ?)")
+        params += [f"%{a['search']}%", f"%{a['search']}%"]
+    if a.get("tag"):
+        clauses.append("EXISTS (SELECT 1 FROM transaction_tags g WHERE g.transaction_id = t.id AND g.tag = ?)")
+        params.append(a["tag"])
+    if a.get("direction") == "in":
+        clauses.append("t.amount > 0")
+    elif a.get("direction") == "out":
+        clauses.append("t.amount < 0")
+    for key, op in (("min", ">="), ("max", "<=")):
+        if a.get(key):
+            try:
+                bound = float(a[key])
+            except ValueError:
+                abort(400, description=f"{key} must be a number, not {a[key]!r}")
+            clauses.append(f"ABS(t.amount) {op} ?"); params.append(bound)
+    if a.get("shared") == "1":
+        clauses.append("EXISTS (SELECT 1 FROM shared_expenses s WHERE s.transaction_id = t.id)")
+    if a.get("review") == "1":
+        clauses.append("t.created_at >= datetime('now', '-30 days') AND t.date >= date('now', '-60 days') AND COALESCE(t.category_confidence, 0) < 1")
+    if a.get("transfers") != "1":
+        clauses.append("t.is_transfer = 0")
+    return " AND ".join(clauses), params
+
+
+_TXN_FROM = """
+    FROM transactions t
+    LEFT JOIN categories c ON t.category_id = c.id
+    LEFT JOIN accounts a ON t.account_id = a.id
+"""
+
+
 @app.route("/api/transactions")
 def api_transactions():
     conn = get_conn()
-    query = """
+    where, params = _transaction_filters()
+    query = f"""
         SELECT t.id, t.date, t.description, t.amount, t.original_amount,
                t.original_currency, t.fee, t.category_id, t.category_confidence,
-               t.reference_id, t.notes, t.source_type, t.is_transfer,
-               c.name as category_name, a.name as account_name, a.account_type
-        FROM transactions t
-        LEFT JOIN categories c ON t.category_id = c.id
-        LEFT JOIN accounts a ON t.account_id = a.id
-        WHERE 1=1
+               t.reference_id, t.notes, t.source_type, t.is_transfer, t.created_at,
+               c.name as category_name, a.name as account_name, a.account_type,
+               EXISTS (SELECT 1 FROM shared_expenses s WHERE s.transaction_id = t.id) AS is_shared,
+               (t.created_at >= datetime('now', '-30 days') AND t.date >= date('now', '-60 days')
+                AND COALESCE(t.category_confidence, 0) < 1) AS needs_review
+        {_TXN_FROM}
+        WHERE {where}
+        ORDER BY t.date DESC, t.id DESC
     """
-    params = []
-
-    if request.args.get("from"):
-        query += " AND t.date >= ?"
-        params.append(request.args["from"])
-    if request.args.get("to"):
-        query += " AND t.date <= ?"
-        params.append(request.args["to"])
-    if request.args.get("category"):
-        query += " AND c.name = ?"
-        params.append(request.args["category"])
-    if request.args.get("account"):
-        query += " AND a.name = ?"
-        params.append(request.args["account"])
-    if request.args.get("search"):
-        query += " AND t.description LIKE ?"
-        params.append(f"%{request.args['search']}%")
-
-    # Apply loan/transfer exclusions
-    extra_clauses, extra_params = _loan_transfer_clauses()
-    for clause in extra_clauses:
-        query += f" AND {clause}"
-    params.extend(extra_params)
-
-    query += " ORDER BY t.date DESC, t.id DESC"
-
     if request.args.get("limit"):
         query += " LIMIT ?"
         params.append(int(request.args["limit"]))
-
     rows = conn.execute(query, params).fetchall()
 
-    # Attach tags to each transaction
     results = []
     for r in rows:
         d = dict(r)
-        tags = conn.execute(
-            "SELECT tag FROM transaction_tags WHERE transaction_id = ?", (d["id"],)
-        ).fetchall()
-        d["tags"] = [t["tag"] for t in tags]
+        d["tags"] = [t["tag"] for t in conn.execute(
+            "SELECT tag FROM transaction_tags WHERE transaction_id = ?", (d["id"],))]
         results.append(d)
-
     conn.close()
     return jsonify(results)
 
 
+@app.route("/api/transactions/summary")
+def api_transactions_summary():
+    """Totals for every transaction matching the filters, not just a page of them."""
+    conn = get_conn()
+    where, params = _transaction_filters()
+    r = conn.execute(f"""
+        SELECT COUNT(*) AS count,
+               COALESCE(SUM(CASE WHEN t.amount > 0 THEN t.amount END), 0) AS money_in,
+               COALESCE(SUM(CASE WHEN t.amount < 0 THEN t.amount END), 0) AS money_out,
+               MIN(t.date) AS first, MAX(t.date) AS last
+        {_TXN_FROM}
+        WHERE {where}
+    """, params).fetchone()
+    conn.close()
+    d = dict(r)
+    d["net"] = round(d["money_in"] + d["money_out"], 2)
+    d["money_in"], d["money_out"] = round(d["money_in"], 2), round(d["money_out"], 2)
+    return jsonify(d)
+
+
 @app.route("/api/transactions/<int:txn_id>", methods=["PATCH"])
 def api_update_transaction(txn_id: int):
+    data = body(schemas.TransactionUpdate)
     conn = get_conn()
-    data = request.get_json()
+    txn_row = conn.execute("SELECT description FROM transactions WHERE id = ?", (txn_id,)).fetchone()
+    if not txn_row:
+        conn.close()
+        abort(404, description=f"no transaction {txn_id}")
 
-    if "category_name" in data:
+    if data.category_name is not None:
         cat_row = conn.execute(
-            "SELECT id FROM categories WHERE name = ?", (data["category_name"],)
+            "SELECT id FROM categories WHERE name = ?", (data.category_name,)
         ).fetchone()
-        if cat_row:
-            conn.execute(
-                "UPDATE transactions SET category_id = ?, category_confidence = 1.0 WHERE id = ?",
-                (cat_row["id"], txn_id),
-            )
-            # Learn this categorization
-            txn_row = conn.execute(
-                "SELECT description FROM transactions WHERE id = ?", (txn_id,)
-            ).fetchone()
-            if txn_row:
-                desc_upper = txn_row["description"].upper()
-                conn.execute(
-                    """INSERT INTO category_rules_learned (description_pattern, category_id, times_seen)
-                    VALUES (?, ?, 1)
-                    ON CONFLICT(description_pattern)
-                    DO UPDATE SET category_id = excluded.category_id, times_seen = times_seen + 1""",
-                    (desc_upper, cat_row["id"]),
-                )
-
-    if "notes" in data:
+        if not cat_row:
+            conn.close()
+            abort(400, description=f"no category named {data.category_name!r}")
         conn.execute(
-            "UPDATE transactions SET notes = ? WHERE id = ?",
-            (data["notes"], txn_id),
+            "UPDATE transactions SET category_id = ?, category_confidence = 1.0 WHERE id = ?",
+            (cat_row["id"], txn_id),
         )
+        # Learn this categorization
+        conn.execute(
+            """INSERT INTO category_rules_learned (description_pattern, category_id, times_seen)
+            VALUES (?, ?, 1)
+            ON CONFLICT(description_pattern)
+            DO UPDATE SET category_id = excluded.category_id, times_seen = times_seen + 1""",
+            (txn_row["description"].upper(), cat_row["id"]),
+        )
+
+    if data.notes is not None:
+        conn.execute("UPDATE transactions SET notes = ? WHERE id = ?", (data.notes or None, txn_id))
+
+    if data.reviewed:
+        # Reviewed keeps the category and confirms it, as a manual edit would.
+        conn.execute(
+            "UPDATE transactions SET category_confidence = 1.0 WHERE id = ?", (txn_id,))
 
     conn.commit()
     conn.close()
@@ -554,8 +609,8 @@ def api_holding_events(holding_id: int):
 @app.route("/api/holdings", methods=["POST"])
 def api_create_holding():
     """Create or update a holding."""
+    h = body(schemas.HoldingCreate)
     conn = get_conn()
-    data = request.get_json()
     try:
         cursor = conn.execute(
             """INSERT INTO holdings (asset_type, name, ticker, units, cost_basis, current_value, as_at_date, notes)
@@ -563,8 +618,8 @@ def api_create_holding():
             ON CONFLICT(asset_type, name) DO UPDATE SET
                 ticker=excluded.ticker, units=excluded.units, cost_basis=excluded.cost_basis,
                 current_value=excluded.current_value, as_at_date=excluded.as_at_date, notes=excluded.notes""",
-            (data["asset_type"], data["name"], data.get("ticker"), data.get("units", 0),
-             data.get("cost_basis", 0), data.get("current_value"), data.get("as_at_date"), data.get("notes")),
+            (h.asset_type, h.name, h.ticker, h.units, h.cost_basis, h.current_value,
+             sql_value(h.as_at_date), h.notes),
         )
         conn.commit()
         conn.close()
@@ -577,8 +632,12 @@ def api_create_holding():
 @app.route("/api/holdings/<int:holding_id>/events", methods=["POST"])
 def api_create_event(holding_id: int):
     """Add an asset event (buy, sell, dividend, etc.)."""
+    data = body(schemas.AssetEventCreate).model_dump()
+    data["date"] = sql_value(data["date"])
     conn = get_conn()
-    data = request.get_json()
+    if not conn.execute("SELECT 1 FROM holdings WHERE id = ?", (holding_id,)).fetchone():
+        conn.close()
+        abort(404, description=f"no holding {holding_id}")
     try:
         conn.execute(
             """INSERT INTO asset_events (holding_id, date, event_type, units, price_per_unit, total_value, fees, reference, source_file, notes)
@@ -589,10 +648,10 @@ def api_create_event(holding_id: int):
         # Update holding units and cost basis
         if data["event_type"] == "buy":
             conn.execute("UPDATE holdings SET units = units + ?, cost_basis = cost_basis + ? WHERE id = ?",
-                        (data.get("units", 0), data["total_value"], holding_id))
+                        (data["units"] or 0, data["total_value"], holding_id))
         elif data["event_type"] == "sell":
             conn.execute("UPDATE holdings SET units = units - ? WHERE id = ?",
-                        (data.get("units", 0), holding_id))
+                        (data["units"] or 0, holding_id))
         elif data["event_type"] == "valuation":
             conn.execute("UPDATE holdings SET current_value = ?, as_at_date = ? WHERE id = ?",
                         (data["total_value"], data["date"], holding_id))
@@ -1536,14 +1595,14 @@ def api_summary_economics():
 @app.route("/api/transactions/<int:txn_id>/split", methods=["PATCH"])
 def api_update_split(txn_id: int):
     """Manual override of a transaction split."""
+    data = body(schemas.SplitUpdate)
     conn = get_conn()
-    data = request.get_json()
-    biz_name = data.get("business_name")
+    biz_name = data.business_name
     if not biz_name:
         tax_config = _get_tax_config()
         businesses = tax_config.get("businesses", [])
         biz_name = businesses[0]["name"] if businesses else "Business"
-    pct = data.get("business_pct", 0)
+    pct = data.business_pct
 
     # Get transaction amount
     txn = conn.execute("SELECT amount FROM transactions WHERE id = ?", (txn_id,)).fetchone()
@@ -1581,8 +1640,9 @@ def api_list_work_trips():
 
 @app.route("/api/work-trips", methods=["POST"])
 def api_create_work_trip():
+    data = body(schemas.WorkTripCreate).model_dump()
+    data["start_date"], data["end_date"] = sql_value(data["start_date"]), sql_value(data["end_date"])
     conn = get_conn()
-    data = request.get_json()
     try:
         cursor = conn.execute(
             "INSERT INTO work_trips (fy, name, start_date, end_date, notes) VALUES (?, ?, ?, ?, ?)",
@@ -1592,7 +1652,7 @@ def api_create_work_trip():
         trip_id = cursor.lastrowid
 
         # Add expenses if provided
-        for exp in data.get("expenses", []):
+        for exp in data["expenses"]:
             conn.execute(
                 "INSERT INTO work_trip_expenses (trip_id, expense_type, amount, description) VALUES (?, ?, ?, ?)",
                 (trip_id, exp["expense_type"], exp["amount"], exp.get("description")),
@@ -1629,8 +1689,8 @@ def api_list_tax_overrides():
 
 @app.route("/api/tax-overrides", methods=["POST"])
 def api_create_tax_override():
+    data = body(schemas.TaxOverrideCreate).model_dump()
     conn = get_conn()
-    data = request.get_json()
     try:
         conn.execute(
             """INSERT OR REPLACE INTO tax_overrides (fy, section, label, amount, notes)
@@ -1742,10 +1802,9 @@ def api_schedules():
 
 @app.route("/api/shared-expenses", methods=["POST"])
 def api_add_shared_expense():
+    data = body(schemas.SharedExpenseCreate)
     conn = get_conn()
-    data = request.get_json()
-    txn_id = data["transaction_id"]
-    split_pct = data.get("split_pct", 50.0)
+    txn_id, split_pct = data.transaction_id, data.split_pct
     try:
         conn.execute(
             "INSERT INTO shared_expenses (transaction_id, split_pct) VALUES (?, ?)",
@@ -1761,24 +1820,21 @@ def api_add_shared_expense():
 
 @app.route("/api/shared-expenses/<int:se_id>", methods=["PATCH"])
 def api_update_shared_expense(se_id: int):
+    data = body(schemas.SharedExpenseUpdate)
     conn = get_conn()
-    data = request.get_json()
+    if not conn.execute("SELECT 1 FROM shared_expenses WHERE id = ?", (se_id,)).fetchone():
+        conn.close()
+        abort(404, description=f"no shared expense {se_id}")
 
-    if "is_settled" in data:
-        settled_date = None
-        if data["is_settled"]:
-            from datetime import date
-            settled_date = date.today().isoformat()
+    if data.is_settled is not None:
+        from datetime import date
         conn.execute(
             "UPDATE shared_expenses SET is_settled = ?, settled_date = ? WHERE id = ?",
-            (int(data["is_settled"]), settled_date, se_id),
+            (int(data.is_settled), date.today().isoformat() if data.is_settled else None, se_id),
         )
 
-    if "split_pct" in data:
-        conn.execute(
-            "UPDATE shared_expenses SET split_pct = ? WHERE id = ?",
-            (data["split_pct"], se_id),
-        )
+    if data.split_pct is not None:
+        conn.execute("UPDATE shared_expenses SET split_pct = ? WHERE id = ?", (data.split_pct, se_id))
 
     conn.commit()
     conn.close()

@@ -9,6 +9,7 @@ dependencies = [
     "flask",
     "flask-cors",
     "python-dotenv",
+    "pydantic>=2",
 ]
 
 [tool.setuptools.packages.find]
