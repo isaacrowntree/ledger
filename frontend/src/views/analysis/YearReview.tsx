@@ -2,7 +2,10 @@ import { categoryColor } from "../../lib/categoryColors";
 import { useState } from "react";
 import { MonthlyBars, RankedBars } from "../../components/charts";
 import { Figure, Figures, Loaded, Money, PageHead, Section } from "../../components/ui";
-import { displayDate, money } from "../../lib/format";
+import { displayDate, money, monthShort } from "../../lib/format";
+import { CategoryLabel, TxnLink } from "../../components/layout";
+import { monthRange } from "../../lib/periods";
+import type { PeriodSummary } from "../../api";
 import { usePeriod, useYearReview } from "../../lib/queries";
 
 export function YearReview() {
@@ -46,19 +49,12 @@ export function YearReview() {
                   { key: "spending", label: "Spending", color: "var(--series-spending)" },
                 ]} />
               </div>
-              <Section title="Spending by category">
-                <div className="grid-2">
-                  <RankedBars limit={12} items={spendCats.map((c) => ({ label: c.category, value: -c.total, color: categoryColor(c.category) }))} />
-                  <table className="ledger">
-                    <thead><tr><th>Category</th><th className="num">Count</th><th className="num">Total</th><th className="num">A month</th></tr></thead>
-                    <tbody>
-                      {spendCats.map((c) => (
-                        <tr key={c.category}><td>{c.category}</td><td className="num muted">{c.count}</td>
-                          <td className="num"><Money value={c.total} /></td><td className="num muted"><Money value={c.total / months} tone="plain" /></td></tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+              <Section title="Spending by category" aside="Each cell opens its transactions">
+                <CategoryMatrix series={p.series} months={p.months.map((m) => m.month)} order={spendCats.map((c) => c.category)} />
+              </Section>
+              <Section title="Biggest categories">
+                <RankedBars limit={12} items={spendCats.map((c) => ({ label: c.category, value: -c.total, color: categoryColor(c.category),
+                  link: { from: `${year}-01-01`, to: `${year}-12-31` } }))} />
               </Section>
             </>
           );
@@ -96,5 +92,50 @@ export function YearReview() {
         )}
       </Loaded>
     </>
+  );
+}
+
+/** Months across, categories down: where the money went, and when. Shading
+ * runs light to dark within each row, so a category's heavy months stand out;
+ * the figures carry the actual amounts. */
+function CategoryMatrix({ series, months, order }: { series: PeriodSummary["series"]; months: string[]; order: string[] }) {
+  const cell = new Map<string, number>();
+  for (const s of series) if (!s.is_income) cell.set(`${s.category}|${s.month}`, -s.total);
+  const n = Math.max(months.length, 1);
+  return (
+    <div className="table-wrap">
+      <table className="ledger matrix">
+        <thead>
+          <tr><th>Category</th>{months.map((m) => <th key={m} className="num">{monthShort(m)}</th>)}
+            <th className="num">A month</th><th className="num">Total</th></tr>
+        </thead>
+        <tbody>
+          {order.map((cat) => {
+            const vals = months.map((m) => cell.get(`${cat}|${m}`) ?? 0);
+            const total = vals.reduce((a, b) => a + b, 0);
+            const max = Math.max(...vals, 1);
+            return (
+              <tr key={cat}>
+                <td><CategoryLabel category={cat} /></td>
+                {months.map((m, i) => {
+                  const v = vals[i];
+                  const r = monthRange(m);
+                  return (
+                    <td key={m} className="num heat"
+                        style={{ ["--heat" as string]: `${Math.round((Math.max(v, 0) / max) * 38)}%` }}>
+                      {Math.abs(v) >= 0.5 ? (
+                        <TxnLink category={cat} from={r.from} to={r.to}>{money(v, { cents: false })}</TxnLink>
+                      ) : <span className="muted">–</span>}
+                    </td>
+                  );
+                })}
+                <td className="num muted">{money(total / n, { cents: false })}</td>
+                <td className="num"><strong>{money(total, { cents: false })}</strong></td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
   );
 }

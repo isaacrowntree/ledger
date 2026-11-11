@@ -1,5 +1,5 @@
 import { keepPreviousData, QueryClient, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api } from "../api";
+import { api, type TransactionUpdate } from "../api";
 
 export const queryClient = new QueryClient({
   defaultOptions: {
@@ -22,6 +22,9 @@ export const usePeriod = (from: string, to: string) =>
 
 export const useTransactions = (filters: Record<string, string>) =>
   useQuery({ queryKey: ["transactions", filters], queryFn: () => api.transactions(filters) });
+
+export const useTransactionTotals = (filters: Record<string, string>) =>
+  useQuery({ queryKey: ["transactions", "totals", filters], queryFn: () => api.transactionTotals(filters) });
 
 export const useBudget = (month: string) =>
   useQuery({ queryKey: ["budget", month], queryFn: () => api.budgetVsActual(month) });
@@ -62,7 +65,7 @@ export const useSpreadsheet = (tab: "outgoing" | "incoming" | "rental" | "work-t
 export function useUpdateTransaction() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, data }: { id: number; data: Record<string, unknown> }) => api.updateTransaction(id, data),
+    mutationFn: ({ id, data }: { id: number; data: TransactionUpdate }) => api.updateTransaction(id, data),
     onSuccess: () => {
       for (const key of ["transactions", "period", "budget", "trends", "year-review", "spreadsheet"])
         qc.invalidateQueries({ queryKey: [key] });
@@ -72,7 +75,10 @@ export function useUpdateTransaction() {
 
 export function useSharedMutations() {
   const qc = useQueryClient();
-  const done = () => qc.invalidateQueries({ queryKey: ["shared"] });
+  const done = () => {
+    qc.invalidateQueries({ queryKey: ["shared"] });
+    qc.invalidateQueries({ queryKey: ["transactions"] });
+  };
   return {
     add: useMutation({ mutationFn: (id: number) => api.addSharedExpense(id), onSuccess: done }),
     update: useMutation({

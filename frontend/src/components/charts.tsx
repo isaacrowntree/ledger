@@ -1,3 +1,4 @@
+import { TxnLink } from "./layout";
 import { useMemo, useRef, useState, type ReactNode } from "react";
 import { money, monthLong, monthShort } from "../lib/format";
 
@@ -163,14 +164,17 @@ export function MonthlyBars({
   );
 }
 
-/** Ranked horizontal bars for one measure (spending by category). */
+type RankedItem = { label: string; value: number; note?: string; other?: boolean; color?: string; link?: { from?: string; to?: string } };
+
+/** Ranked horizontal bars for one measure (spending by category). With
+ * `link`, each label opens the transactions behind its bar. */
 export function RankedBars({
   items,
   limit = 10,
   kind = "spending",
   footer,
 }: {
-  items: { label: string; value: number; note?: string; other?: boolean; color?: string }[];
+  items: RankedItem[];
   limit?: number;
   kind?: "spending" | "income";
   footer?: ReactNode;
@@ -195,15 +199,13 @@ export function RankedBars({
   );
 }
 
-function RankedRow({ label, value, note, max, kind, other, color }: {
-  label: string; value: number; note?: string; max: number; kind: string; other?: boolean; color?: string;
-}) {
+function RankedRow({ label, value, note, max, kind, other, color, link }: RankedItem & { max: number; kind: string }) {
   // The folded "other" row is a sum, not a category: neutral, so it never reads as the biggest one.
   return (
     <>
       <span title={note} className={`cat-cell ${other ? "muted" : ""}`}>
         {color && !other && <i className="cat-dot" style={{ background: color }} />}
-        {label}
+        {link && !other ? <TxnLink category={label} from={link.from} to={link.to}>{label}</TxnLink> : label}
       </span>
       <span>
         <div className={`bar ${kind === "income" ? "income" : ""}`}
@@ -345,5 +347,116 @@ function RankedWaterRow({ label, value, kind, max }: { label: string; value: num
       <span><div className="bar" style={{ width: `${(Math.abs(value) / max) * 100}%`, background: color }} /></span>
       <span className="val">{money(value)}</span>
     </>
+  );
+}
+
+/** Spending added up day by day: this month against last month, on one axis.
+ * Days past today are not drawn, so the line stops where the month has got to. */
+export function CumulativeSpend({
+  current,
+  previous,
+  currentLabel,
+  previousLabel,
+  height = 200,
+}: {
+  current: (number | null)[];   // index 0 = day 1; null = day still to come
+  previous: number[];
+  currentLabel: string;
+  previousLabel: string;
+  height?: number;
+}) {
+  const [hover, setHover] = useState<number | null>(null);
+  const pad = { l: 44, r: 12, t: 10, b: 24 };
+  const days = Math.max(current.length, previous.length);
+  const max = niceMax(Math.max(1, ...previous, ...current.map((v) => v ?? 0)));
+  const innerW = W - pad.l - pad.r;
+  const innerH = height - pad.t - pad.b;
+  const x = (i: number) => pad.l + (i / Math.max(days - 1, 1)) * innerW;
+  const y = (v: number) => pad.t + innerH - (v / max) * innerH;
+  const path = (vals: (number | null)[]) =>
+    vals.map((v, i) => (v == null ? "" : `${i && vals[i - 1] != null ? "L" : "M"}${x(i)},${y(v)}`)).join(" ");
+  let lastDay = -1;
+  current.forEach((v, i) => { if (v != null) lastDay = i; });
+  const h = hover;
+  return (
+    <div>
+      <div className="legend">
+        <span><i style={{ background: "var(--series-spending)" }} />{currentLabel}</span>
+        <span><i style={{ background: "var(--series-neutral)" }} />{previousLabel}</span>
+      </div>
+      <div className="chart-box" onMouseLeave={() => setHover(null)}>
+        <svg className="chart" viewBox={`0 0 ${W} ${height}`} role="img"
+             aria-label={`Spending so far: ${currentLabel} against ${previousLabel}`}
+             onMouseMove={(e) => {
+               const rect = (e.currentTarget as SVGSVGElement).getBoundingClientRect();
+               const px = ((e.clientX - rect.left) / rect.width) * W;
+               setHover(Math.max(0, Math.min(days - 1, Math.round(((px - pad.l) / innerW) * (days - 1)))));
+             }}>
+          <g className="grid">
+            {ticks(max).map((t) => (
+              <g key={t}>
+                <line x1={pad.l} x2={W - pad.r} y1={y(t)} y2={y(t)} />
+                <text x={pad.l - 6} y={y(t) + 4} textAnchor="end">{axisMoney(t)}</text>
+              </g>
+            ))}
+          </g>
+          {[1, 8, 15, 22, 29].filter((d) => d <= days).map((d) => (
+            <text key={d} x={x(d - 1)} y={height - 6} textAnchor="middle">{d}</text>
+          ))}
+          <path d={path(previous)} fill="none" stroke="var(--series-neutral)" strokeWidth={2} strokeDasharray="4 4" />
+          <path d={path(current)} fill="none" stroke="var(--series-spending)" strokeWidth={2} />
+          {lastDay >= 0 && (
+            <circle cx={x(lastDay)} cy={y(current[lastDay]!)} r={4} fill="var(--series-spending)" stroke="var(--surface)" strokeWidth={2} />
+          )}
+          {h !== null && <line x1={x(h)} x2={x(h)} y1={pad.t} y2={pad.t + innerH} stroke="var(--rule-strong)" />}
+        </svg>
+        {h !== null && (
+          <div className="tooltip" style={{ left: `${(x(h) / W) * 100}%`, top: 0,
+            transform: h > days / 2 ? "translateX(-105%)" : "translateX(8px)" }}>
+            <strong>Day {h + 1}</strong>
+            <div>{currentLabel}: {current[h] != null ? money(current[h]!, { cents: false }) : "still to come"}</div>
+            <div>{previousLabel}: {previous[h] != null ? money(previous[h], { cents: false }) : "—"}</div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** A month as a calendar, with marks on days. Each mark carries its own
+ * label; `kind` styles it (filled = happened, outlined = expected). */
+export function MonthGrid({
+  month,
+  marks,
+}: {
+  month: string; // "2026-11"
+  marks: { date: string; label: string; kind: "done" | "expected" | "late" }[];
+}) {
+  const [y, m] = month.split("-").map(Number);
+  const first = new Date(y, m - 1, 1);
+  const daysIn = new Date(y, m, 0).getDate();
+  const lead = (first.getDay() + 6) % 7; // weeks start on Monday
+  const today = new Date();
+  const todayDay = today.getFullYear() === y && today.getMonth() === m - 1 ? today.getDate() : 0;
+  const cells: (number | null)[] = [...Array(lead).fill(null), ...Array.from({ length: daysIn }, (_, i) => i + 1)];
+  while (cells.length % 7) cells.push(null);
+  const byDay = new Map<number, typeof marks>();
+  for (const mk of marks) {
+    if (mk.date.slice(0, 7) !== month) continue;
+    const d = Number(mk.date.slice(8, 10));
+    byDay.set(d, [...(byDay.get(d) ?? []), mk]);
+  }
+  return (
+    <div className="month-grid" role="table" aria-label={monthLong(month)}>
+      {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d) => <div key={d} className="mg-head" role="columnheader">{d}</div>)}
+      {cells.map((d, i) => (
+        <div key={i} role="cell" className={`mg-cell ${d ? "" : "blank"} ${d === todayDay ? "today" : ""}`}>
+          {d && <span className="mg-day">{d}</span>}
+          {d && byDay.get(d)?.map((mk, j) => (
+            <span key={j} className={`mg-mark ${mk.kind}`} title={mk.label}>{mk.label}</span>
+          ))}
+        </div>
+      ))}
+    </div>
   );
 }

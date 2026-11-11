@@ -1,10 +1,14 @@
 import { categoryColor } from "../lib/categoryColors";
 import { Link } from "@tanstack/react-router";
 import type { AccountSummary, Holding } from "../api";
-import { MonthlyBars, RankedBars } from "../components/charts";
+import { CumulativeSpend, MonthlyBars, RankedBars } from "../components/charts";
+import { budgetStatus, CategoryLabel, Meter, StatusTag, TxnLink } from "../components/layout";
+import { monthElapsed } from "./money/Budget";
 import { Figure, Figures, Loaded, Money, Section } from "../components/ui";
-import { displayDate, isoDate, money } from "../lib/format";
-import { useAccounts, useBudget, usePeriod, useSchedules, useShared } from "../lib/queries";
+import { displayDate, isoDate, money, monthLong } from "../lib/format";
+import {
+  useAccounts, useBudget, useCategories, usePeriod, useSchedules, useShared, useTransactionTotals, useTransactions,
+} from "../lib/queries";
 
 const HOLDING_LABELS: Record<string, string> = {
   property: "Property", vehicle: "Vehicle", shares: "Shares", super: "Super", crypto: "Crypto",
@@ -27,8 +31,6 @@ export function Overview() {
   const period = usePeriod(range.from, range.to);
   const shared = useShared();
   const schedules = useSchedules();
-  const thisMonth = isoDate(new Date()).slice(0, 7);
-  const budget = useBudget(thisMonth);
 
   return (
     <Loaded query={accounts}>
@@ -52,6 +54,7 @@ export function Overview() {
 
         return (
           <>
+            <h1 className="sr-only">Overview</h1>
             <p className="muted" style={{ margin: 0 }}>Balances as of {displayDate(asOf)}</p>
             <p className="position">
               You have <strong>{money(cashTotal, { cents: false })}</strong> in your accounts
@@ -111,37 +114,7 @@ export function Overview() {
               </Figure>
             </Figures>
 
-            <Section title="This month" aside={<Link to="/money/budget">Budget</Link>}>
-              <Loaded query={budget}>
-                {(rows) => {
-                  const watched = [...rows]
-                    .filter((b) => b.budget > 0)
-                    .sort((a, b) => b.actual / b.budget - a.actual / a.budget)
-                    .slice(0, 4);
-                  return watched.length ? (
-                    <div className="grid-2">
-                      {watched.map((b) => {
-                        const over = b.actual > b.budget;
-                        return (
-                          <div key={b.category} className={`meter ${over ? "over" : ""}`}>
-                            <div className="meter-head">
-                              <span className="cat-cell"><i className="cat-dot" style={{ background: categoryColor(b.category) }} />{b.category}</span>
-                              <span className="state">
-                                {money(b.actual, { cents: false })} of {money(b.budget, { cents: false })}
-                                {over ? ` · ${money(b.actual - b.budget, { cents: false })} over` : ""}
-                              </span>
-                            </div>
-                            <div className="meter-track">
-                              <div className="meter-fill cat" style={{ width: `${Math.min(100, (b.actual / b.budget) * 100)}%`, ["--cat" as string]: categoryColor(b.category) }} />
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  ) : <p className="hint">No monthly budgets set. Add them to config/categories.yaml.</p>;
-                }}
-              </Loaded>
-            </Section>
+            <ThisMonth partner={partner} />
 
             <Section title="The last 12 complete months" aside={`${displayDate(range.from)} to ${displayDate(range.to)}`}>
               <Loaded query={period}>
@@ -182,7 +155,7 @@ export function Overview() {
                       <RankedBars
                         items={p.categories
                           .filter((c) => !c.is_income && c.total < 0)
-                          .map((c) => ({ label: c.category, value: -c.total, color: categoryColor(c.category) }))}
+                          .map((c) => ({ label: c.category, value: -c.total, color: categoryColor(c.category), link: range }))}
                       />
                     </Section>
                   </>
@@ -236,5 +209,110 @@ function HoldingLine({ h }: { h: Holding }) {
       </span>
       <Money value={share(h.current_value || 0, h.ownership_pct)} cents={false} />
     </div>
+  );
+}
+
+// Bills that land once a month or less would swamp the day-to-day line, so
+// housing is left out of it (it still counts in every total).
+const NOT_DAY_TO_DAY = /^(Mortgage|Strata|Rent|Rental:)/;
+
+function ThisMonth({ partner }: { partner: string }) {
+  const now = new Date();
+  const month = isoDate(now).slice(0, 7);
+  const prevStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const prevMonth = isoDate(prevStart).slice(0, 7);
+  const from = isoDate(prevStart);
+  const today = isoDate(now);
+  const txns = useTransactions({ from, to: today, limit: "5000" });
+  const categories = useCategories();
+  const budget = useBudget(month);
+  const schedules = useSchedules();
+  const review = useTransactionTotals({ review: "1" });
+  const elapsed = monthElapsed(month, now);
+  const monthEnd = isoDate(new Date(now.getFullYear(), now.getMonth() + 1, 0));
+
+  const lines = (() => {
+    if (!txns.data || !categories.data) return null;
+    const income = new Set(categories.data.filter((c) => c.is_income).map((c) => c.name));
+    const daysPrev = new Date(now.getFullYear(), now.getMonth(), 0).getDate();
+    const daysCur = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+    const cur = Array(daysCur).fill(0);
+    const prev = Array(daysPrev).fill(0);
+    for (const t of txns.data) {
+      const cat = t.category_name ?? "Uncategorized";
+      if (income.has(cat) || NOT_DAY_TO_DAY.test(cat)) continue;
+      const day = Number(t.date.slice(8, 10)) - 1;
+      if (t.date.startsWith(month)) cur[day] -= t.amount;
+      else if (t.date.startsWith(prevMonth)) prev[day] -= t.amount;
+    }
+    const run = (a: number[]) => { let s = 0; return a.map((v) => (s += v)); };
+    const curRun: (number | null)[] = run(cur).map((v, i) => (i < now.getDate() ? v : null));
+    const prevRun = run(prev);
+    return { cur: curRun, prev: prevRun, soFar: curRun[now.getDate() - 1] ?? 0, prevSameDay: prevRun[Math.min(now.getDate(), daysPrev) - 1] };
+  })();
+
+  const due = (schedules.data?.schedules ?? [])
+    .filter((s) => s.next_due <= monthEnd)
+    .map((s) => ({ name: s.name, date: s.next_due, amount: s.their_share }));
+
+  return (
+    <Section title={`This month: ${monthLong(month)}`} aside={<TxnLink from={`${month}-01`} to={monthEnd}>All this month's transactions</TxnLink>}>
+      <div className="band">
+        <div>
+          {lines ? (
+            <>
+              <p className="band-lede">
+                Day-to-day spending so far is <strong>{money(lines.soFar, { cents: false })}</strong>,{" "}
+                {Math.abs(lines.soFar - lines.prevSameDay) < 1 ? "the same as" : (
+                  <>{money(Math.abs(lines.soFar - lines.prevSameDay), { cents: false })} {lines.soFar > lines.prevSameDay ? "more than" : "less than"}</>
+                )} by this day last month. Mortgage, strata and rent are left out of this line.
+              </p>
+              <CumulativeSpend current={lines.cur} previous={lines.prev}
+                               currentLabel={monthLong(month)} previousLabel={monthLong(prevMonth)} />
+            </>
+          ) : <div className="loading">Loading…</div>}
+        </div>
+        <div className="band-side">
+          <h3>Budgets to watch</h3>
+          <Loaded query={budget}>
+            {(rows) => {
+              const watched = rows.filter((b) => b.budget > 0 && !b.is_income)
+                .sort((a, b) => b.actual / b.budget - a.actual / a.budget).slice(0, 4);
+              return watched.length ? (
+                <div className="watch">
+                  {watched.map((b) => (
+                    <div key={b.category} className="watch-row">
+                      <div className="watch-head">
+                        <TxnLink category={b.category} from={`${month}-01`} to={monthEnd}><CategoryLabel category={b.category} /></TxnLink>
+                        <StatusTag status={budgetStatus(b.actual, b.budget, elapsed)}
+                                   label={`${money(b.actual, { cents: false })} of ${money(b.budget, { cents: false })}`} />
+                      </div>
+                      <Meter category={b.category} actual={b.actual} planned={b.budget} elapsed={elapsed} />
+                    </div>
+                  ))}
+                  <Link to="/money/budget" className="more">Every budget</Link>
+                </div>
+              ) : <p className="hint">No monthly budgets set.</p>;
+            }}
+          </Loaded>
+          {due.length > 0 && (
+            <>
+              <h3>Expected from {partner} this month</h3>
+              {due.map((d) => (
+                <div className="line" key={d.name}>
+                  <span>{d.name}<div className="sub">next due {displayDate(d.date)}</div></span>
+                  <Money value={d.amount} />
+                </div>
+              ))}
+            </>
+          )}
+          {(review.data?.count ?? 0) > 0 && (
+            <Link to="/money/transactions" search={{ q: "is:review" }} className="review-link">
+              <i className="review-dot" aria-hidden /> {review.data!.count} new transaction{review.data!.count === 1 ? "" : "s"} to review
+            </Link>
+          )}
+        </div>
+      </div>
+    </Section>
   );
 }

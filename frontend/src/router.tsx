@@ -21,6 +21,7 @@ import { Depreciation } from "./views/tax/Depreciation";
 import { Trends } from "./views/analysis/Trends";
 import { YearReview } from "./views/analysis/YearReview";
 import { Economics } from "./views/analysis/Economics";
+import type { TxnSearch } from "./lib/txnQuery";
 
 // Four areas instead of twelve tabs: where you stand, the money itself, tax,
 // and looking back.
@@ -88,13 +89,30 @@ function Shell() {
   );
 }
 
+/** A YYYY-MM-DD date from a URL parameter, or "" if it is not one. */
+const isoDay = (v: unknown): string => {
+  const m = typeof v === "string" ? /^\d{4}-\d{2}-\d{2}/.exec(v) : null;
+  return m ? m[0] : "";
+};
+
 const root = createRootRoute({ component: Shell });
 const r = (path: string, component: () => ReactNode) =>
   createRoute({ getParentRoute: () => root, path, component });
 
 const routeTree = root.addChildren([
   r("/", Overview),
-  r("/money/transactions", Transactions),
+  createRoute({
+    getParentRoute: () => root,
+    path: "/money/transactions",
+    component: Transactions,
+    // The search, period and filters live in the URL, so a filtered list can
+    // be linked to, bookmarked, and reached from any figure in the app.
+    validateSearch: (s: Record<string, unknown>): TxnSearch => ({
+      ...(typeof s.q === "string" && s.q ? { q: s.q } : {}),
+      ...(isoDay(s.from) ? { from: isoDay(s.from) } : {}),
+      ...(isoDay(s.to) ? { to: isoDay(s.to) } : {}),
+    }),
+  }),
   r("/money/budget", Budget),
   r("/money/shared", Shared),
   r("/money/recurring", Recurring),

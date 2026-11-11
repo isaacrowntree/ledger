@@ -20,7 +20,7 @@ async function get<T>(path: string, params?: Record<string, string>): Promise<T>
   return checked<T>(await fetch(url.toString()));
 }
 
-async function patch<T>(path: string, body: Record<string, unknown>): Promise<T> {
+async function patch<T>(path: string, body: object): Promise<T> {
   return checked<T>(await fetch(`${BASE}${path}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
@@ -44,6 +44,26 @@ export interface Transaction {
   is_transfer: number;
   notes: string | null;
   source_type: string;
+  created_at: string;
+  is_shared: number;
+  /** Imported recently, dated recently, and the category not yet confirmed by hand. */
+  needs_review: number;
+  tags: string[];
+}
+
+export interface TransactionTotals {
+  count: number;
+  money_in: number;
+  money_out: number;
+  net: number;
+  first: string | null;
+  last: string | null;
+}
+
+export interface TransactionUpdate {
+  category_name?: string;
+  notes?: string;
+  reviewed?: boolean;
 }
 
 export interface Category {
@@ -524,7 +544,10 @@ export const api = {
   transactions: (params?: Record<string, string>) =>
     get<Transaction[]>(`${BASE}/transactions`, params),
 
-  updateTransaction: (id: number, data: Record<string, unknown>) =>
+  transactionTotals: (params?: Record<string, string>) =>
+    get<TransactionTotals>(`${BASE}/transactions/summary`, params),
+
+  updateTransaction: (id: number, data: TransactionUpdate) =>
     patch<{ ok: boolean }>(`/transactions/${id}`, data),
 
   categories: () => get<Category[]>(`${BASE}/categories`),
