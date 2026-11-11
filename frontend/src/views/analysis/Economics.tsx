@@ -12,7 +12,7 @@ export function Economics() {
 
   return (
     <>
-      <PageHead title="Tax & inflation" lede="What your salary buys after tax and after prices have moved.">
+      <PageHead title="Tax & inflation" lede="What your salary buys after income tax, after the taxes paid through spending, and after prices have moved.">
         <select value={year} onChange={(e) => setYear(Number(e.target.value))} aria-label="Year">
           {Array.from({ length: 11 }, (_, i) => thisYear - i).map((y) => <option key={y} value={y}>{y}</option>)}
         </select>
@@ -26,6 +26,7 @@ export function Economics() {
           const sp = d.spending_power;
           const tax = d.tax_analysis;
           const hasCpi = d.cpi.current_index != null;
+          const ind = d.indirect_taxes ?? { lines: [], total_tax: 0, total: 0 };
           return (
             <>
               {!hasCpi && (
@@ -44,15 +45,44 @@ export function Economics() {
                 </Figure>
               </Figures>
 
-              <Section title="From salary to take-home">
+              <Section title="From salary to what's left after every tax"
+                       aside={sp.salary > 0
+                         ? `All taxes ${money(tax.total_tax + ind.total_tax, { cents: false })}, ${((tax.total_tax + ind.total_tax) / sp.salary * 100).toFixed(0)}% of salary`
+                         : undefined}>
                 {sp.salary > 0 ? (
                   <Waterfall steps={[
                     { label: "Salary", value: sp.salary, kind: "in" },
                     { label: "Income tax", value: -tax.payg, kind: "out" },
                     { label: "Medicare levy", value: -tax.medicare, kind: "out" },
-                    { label: "After tax", value: tax.after_tax, kind: "result" },
+                    { label: "After income tax", value: tax.after_tax, kind: "result" },
+                    ...ind.lines.map((l) => ({ label: `${l.name}${l.estimate ? " (est.)" : ""}`, value: -l.amount, kind: "out" as const })),
+                    { label: "Left after taxes and charges", value: tax.after_tax - ind.total, kind: "result" },
                   ]} />
                 ) : <p className="hint">No salary recorded for {year}.</p>}
+                {ind.lines.length > 0 && (
+                  <>
+                    <p className="hint">
+                      Taxes paid through spending, worked out from {year}'s transactions. Spending includes shared
+                      household bills at the full amount you paid, so these cover the household, not just you.
+                    </p>
+                    <table className="ledger">
+                      <thead><tr><th>Tax or charge</th><th className="num">Amount</th><th>How it was worked out</th></tr></thead>
+                      <tbody>
+                        {ind.lines.map((l) => (
+                          <tr key={l.name}>
+                            <td>{l.name}<div className="muted" style={{ fontSize: 12.5 }}>{l.estimate ? "Estimate" : "Actual"}{l.kind === "charge" ? " · charge, not a tax" : ""}</div></td>
+                            <td className="num"><Money value={-l.amount} /></td>
+                            <td className="muted">{l.basis}</td>
+                          </tr>
+                        ))}
+                        <tr className="total"><td>Taxes through spending</td><td className="num"><Money value={-ind.total_tax} /></td><td /></tr>
+                        {ind.total !== ind.total_tax && (
+                          <tr className="total"><td>With tolls and other charges</td><td className="num"><Money value={-ind.total} /></td><td /></tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </>
+                )}
               </Section>
 
               {tax.tax_breakdown.length > 0 && (

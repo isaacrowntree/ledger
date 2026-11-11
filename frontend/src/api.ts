@@ -467,8 +467,17 @@ export interface SharedExpensesResponse {
   by_tag: SharedGroup[];
 }
 
+export interface IndirectTaxLine {
+  name: string;
+  amount: number;
+  basis: string;
+  estimate: boolean;
+  kind: "tax" | "charge";
+}
+
 export interface EconomicsSummary {
   year: string;
+  indirect_taxes: { lines: IndirectTaxLine[]; total_tax: number; total: number };
   cpi: {
     current_index: number | null;
     yoy_change: number | null;

@@ -16,6 +16,7 @@ from etl import ato_returns as ato_archive
 from etl import manual_entries as manual_entry_calc
 from etl import cgt as cgt_calc
 from etl import depreciation as depreciation_calc
+from etl import indirect_tax
 
 PROJECT_ROOT = Path(__file__).parent.parent
 FRONTEND_DIST = PROJECT_ROOT / "frontend" / "dist"
@@ -1485,10 +1486,19 @@ def api_summary_economics():
     if real_nw is not None and prev_real_nw and prev_real_nw != 0:
         real_nw_change = round((real_nw - prev_real_nw) / abs(prev_real_nw) * 100, 1)
 
+    # Taxes paid through spending (GST, excise, duties) and road tolls. Most
+    # are estimates from what was spent; each line says how it was worked out.
+    try:
+        with open(CONFIG_DIR / "tax.yaml") as f:
+            indirect_cfg = (yaml.safe_load(f) or {}).get("indirect_taxes") or {}
+    except FileNotFoundError:
+        indirect_cfg = {}
+    indirect = indirect_tax.estimate(conn, f"{year}-01-01", f"{year}-12-31", indirect_cfg)
     conn.close()
 
     return jsonify({
         "year": str(year),
+        "indirect_taxes": indirect,
         "cpi": {
             "current_index": round(current_cpi, 1) if current_cpi else None,
             "yoy_change": yoy_change,
