@@ -112,10 +112,10 @@ from etl.depreciation import dv_schedule  # noqa: E402
 
 
 def test_dv_first_year_is_part_year_from_the_acquisition_date():
-    # Matches the ATO depreciation tool's figures for real assets: a $1,000 lens
-    # bought 17 Nov 2024, 10-year life, and a $1,000 lens, 12-year life.
-    assert dv_schedule(791.0, date(2024, 11, 17), 10)[0]["decline"] == 97.95
-    assert dv_schedule(736.0, date(2024, 11, 17), 12)[0]["decline"] == 75.95
+    # As the ATO depreciation tool does it: days held to 30 June, inclusive,
+    # over the days in the year. 17 Nov 2024 to 30 Jun 2025 is 226 of 365 days.
+    assert dv_schedule(1000.0, date(2024, 11, 17), 10)[0]["decline"] == round(1000 * 0.2 * 226 / 365, 2)
+    assert dv_schedule(1000.0, date(2024, 11, 17), 4)[0]["decline"] == round(1000 * 0.5 * 226 / 365, 2)
 
 
 def test_dv_later_years_are_full_and_the_tail_is_written_off():

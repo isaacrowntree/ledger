@@ -1,7 +1,7 @@
 // The transaction search box takes plain words plus a few typed filters, the
 // way mail and issue trackers do:
 //
-//   category:"Eating Out"  account:"ING Orange Everyday"  tag:partner-rent
+//   category:"Eating Out"  account:"Everyday Account"  tag:partner-rent
 //   is:in  is:out  is:shared  is:review  is:transfer  amount>50  amount<200
 //
 // Anything else is free text, matched against descriptions and notes. Every
