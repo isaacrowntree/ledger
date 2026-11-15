@@ -199,3 +199,23 @@ class TestIndexLifecycle:
         bad.write_text("categories: []\nmerchants:\n  SOMEWHERE: Nonexistent\n")
         with pytest.raises(ValueError, match="Nonexistent"):
             Categorizer(conn, bad, embedder=NgramEmbedder())
+
+
+class TestMixedMerchants:
+    def test_mixed_merchant_rows_always_file_for_review(self, conn, categorizer):
+        store = categorizer.store
+        store.set_mixed("EXAMPLE MARKETPLACE", "out", db.get_category_id(conn, "Shopping"), "mixed")
+        name, conf = _cat(conn, categorizer, "EXAMPLE MARKETPLACE")
+        assert (name, conf) == ("Shopping", CONFIDENCE["review"])
+
+    def test_filing_one_row_never_relabels_a_mixed_merchant(self, conn, categorizer):
+        store = categorizer.store
+        store.set_mixed("EXAMPLE MARKETPLACE", "out", db.get_category_id(conn, "Shopping"), "mixed")
+        store.learn("EXAMPLE MARKETPLACE", -30.0, db.get_category_id(conn, "Business: Equipment"), origin="llm")
+        assert _cat(conn, categorizer, "EXAMPLE MARKETPLACE")[0] == "Shopping"
+
+    def test_mixed_merchants_are_not_flagged_for_the_owner(self, conn, categorizer):
+        store = categorizer.store
+        store.set_mixed("EXAMPLE MARKETPLACE", "out", db.get_category_id(conn, "Shopping"), "mixed")
+        store.flag("EXAMPLE MARKETPLACE", "out", None, "unsure")
+        assert conn.execute("SELECT needs_review FROM merchant_labels WHERE merchant = 'EXAMPLE MARKETPLACE'").fetchone()[0] == 0

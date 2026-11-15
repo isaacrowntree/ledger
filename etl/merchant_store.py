@@ -145,9 +145,11 @@ class MerchantStore:
     def learn_key(self, key: str, direction: str, category_id: int, origin: str = "human",
                   commit: bool = True, example: str | None = None) -> str:
         existing = self.conn.execute(
-            "SELECT id, category_id, origin FROM merchant_labels WHERE merchant = ? AND direction = ?",
+            "SELECT id, category_id, origin, mixed FROM merchant_labels WHERE merchant = ? AND direction = ?",
             (key, direction)).fetchone()
-        if existing is None:
+        if existing is not None and existing["mixed"]:
+            pass        # one row's category says nothing about the merchant's next row
+        elif existing is None:
             cur = self.conn.execute(
                 "INSERT INTO merchant_labels (merchant, direction, category_id, origin, example) "
                 "VALUES (?, ?, ?, ?, ?)", (key, direction, category_id, origin, example))
@@ -166,7 +168,7 @@ class MerchantStore:
         """Ask a person to choose between the label and an alternative category."""
         self.conn.execute(
             "UPDATE merchant_labels SET needs_review = 1, alt_category_id = ?, note = ? "
-            "WHERE merchant = ? AND direction = ?", (alt_category_id, note, key, direction))
+            "WHERE merchant = ? AND direction = ? AND mixed = 0", (alt_category_id, note, key, direction))
         if commit:
             self.conn.commit()
 
@@ -249,11 +251,28 @@ class MerchantStore:
     # --- reads -------------------------------------------------------------
 
     def lookup(self, description: str, amount: float) -> tuple[int, str, bool] | None:
-        """(category_id, origin, needs_review) when this exact merchant is labelled."""
+        """(category_id, origin, needs_review) when this exact merchant is labelled.
+
+        A mixed merchant reports needs_review, so its rows always come up for a look.
+        """
         row = self.conn.execute(
-            "SELECT category_id, origin, needs_review FROM merchant_labels WHERE merchant = ? AND direction = ?",
+            "SELECT category_id, origin, needs_review, mixed FROM merchant_labels "
+            "WHERE merchant = ? AND direction = ?",
             (merchant_key(description), direction_of(amount))).fetchone()
-        return (row[0], row[1], bool(row[2])) if row else None
+        return (row[0], row[1], bool(row[2] or row[3])) if row else None
+
+    def set_mixed(self, key: str, direction: str, default_category_id: int, note: str,
+                  commit: bool = True) -> None:
+        """Mark a merchant as mixed: rows file under the default for review, and
+        filing one of its rows never relabels the merchant."""
+        if not self.conn.execute("SELECT 1 FROM merchant_labels WHERE merchant = ? AND direction = ?",
+                                 (key, direction)).fetchone():
+            self.learn_key(key, direction, default_category_id, origin="human", commit=False)
+        self.conn.execute(
+            "UPDATE merchant_labels SET mixed = 1, category_id = ?, needs_review = 0, alt_category_id = NULL, "
+            "note = ? WHERE merchant = ? AND direction = ?", (default_category_id, note, key, direction))
+        if commit:
+            self.conn.commit()
 
     def nearest(self, description: str, amount: float, k: int = 10,
                 exclude_txn: int | None = None) -> list[Neighbour]:

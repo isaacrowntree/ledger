@@ -203,6 +203,10 @@ MIGRATIONS = [
     # mortgage). Net worth shows both the household figure and your share.
     ("accounts", "ownership_pct", "REAL NOT NULL DEFAULT 100"),
     ("holdings", "ownership_pct", "REAL NOT NULL DEFAULT 100"),
+    # A merchant that sells both business and personal things (Amazon), or a
+    # person whose payments mean different things (house money vs bills). Its
+    # rows always file for review so each is looked at; see MerchantStore.
+    ("merchant_labels", "mixed", "INTEGER NOT NULL DEFAULT 0"),
 ]
 
 
