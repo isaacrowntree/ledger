@@ -6,7 +6,7 @@ from pathlib import Path
 from etl import db
 from etl.models import RawTransaction
 from etl.categorizer import Categorizer
-from etl.currency import extract_fx_rates
+from etl.currency import convert_unconverted, extract_fx_rates
 from etl.engine import as_raw_transaction, ingest_statement
 from etl.shared import SharedRules, mark_shared
 from etl.normalizer import load_payment_patterns
@@ -337,6 +337,11 @@ def cmd_ingest(source: str | None = None, dry_run: bool = False,
     conn.commit()
     conn.close()
 
+    if not dry_run:
+        converted = convert_unconverted(conn)
+        if converted:
+            print(f"\nConverted {len(converted)} foreign-currency rows PayPal left unconverted "
+                  f"(rate from the nearest converted rows; noted '{'FX estimated'}')")
     summary = f"\nDone. Total inserted: {total_inserted}, Total skipped: {total_skipped}"
     if total_rejected:
         summary += f", REFUSED: {total_rejected} statement(s)"
