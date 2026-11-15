@@ -57,8 +57,10 @@ Never commit straight to `main`. For every change:
   equipment) send `learn: false`. There are no `type: regex` category rules.
 - Claude does the categorising: `ledger categorise --export pending.json`, file
   each row (use `similar_filed` and `category_examples` to follow the owner's
-  conventions, calibrated confidence), then `ledger categorise --import`.
-  0.9+ files the row and teaches its merchant; lower is filed for review.
+  conventions), answering each with a bucket, then `ledger categorise --import`.
+  sure: filed and the merchant learned. likely: filed for review. unsure: filed
+  under the best guess and sent to "Merchants to check". No numeric confidence:
+  LLM scores cluster and mean little.
   Merchants needing a person's call go on the dashboard's "Merchants to check".
 - `ledger categorise --evaluate YYYY-MM-DD` scores the categoriser on rows from
   that date learning only from earlier ones. Run it after changing

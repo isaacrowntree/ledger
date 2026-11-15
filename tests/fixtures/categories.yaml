@@ -38,6 +38,9 @@ categories:
   - name: Fees & Charges
   - name: Cash Withdrawal
   - name: Investments
+  - name: "Personal (non-assessable)"
+    is_income: true
+  - name: Home & Garden
   - name: Uncategorized
 
 rules:

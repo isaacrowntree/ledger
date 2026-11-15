@@ -171,6 +171,14 @@ def main():
                           help="File Claude's answers ({id: {category, confidence}})")
     cat_parser.add_argument("--dry-run", action="store_true", help="With --rerun or --import: show changes without writing")
 
+    reimb_parser = sub.add_parser(
+        "reimbursements", help="Link deposits from people to the purchases they pay back")
+    reimb_parser.add_argument("--dry-run", action="store_true", help="Count matches without writing")
+    reimb_parser.add_argument("--export", metavar="FILE",
+                              help="Write ambiguous deposits and their candidate purchases for Claude")
+    reimb_parser.add_argument("--import", dest="import_", metavar="FILE",
+                              help="Link Claude's choices ({deposit id: purchase id or null})")
+
     tag_parser = sub.add_parser("tag", help="Bulk tag/recategorize transactions matching a description pattern")
     tag_parser.add_argument("--pattern", required=True, help="SQL LIKE pattern matched against description (case-insensitive)")
     tag_parser.add_argument("--from", dest="date_from", help="Start date YYYY-MM-DD")
@@ -207,6 +215,9 @@ def main():
         cmd_categorise(CONFIG_DIR / "categories.yaml", seed=args.seed, rerun=args.rerun,
                        evaluate=args.evaluate, stats=args.stats, dry_run=args.dry_run,
                        export=args.export, import_=args.import_)
+    elif args.command == "reimbursements":
+        from etl.reimburse import run as cmd_reimbursements
+        cmd_reimbursements(export=args.export, import_=args.import_, dry_run=args.dry_run)
     elif args.command == "tag":
         cmd_tag(
             pattern=args.pattern,

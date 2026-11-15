@@ -79,6 +79,16 @@ CREATE TABLE IF NOT EXISTS merchant_labels (
     UNIQUE (merchant, direction)
 );
 
+-- A deposit from a person that pays back (part of) one of the owner's purchases.
+-- The deposit is filed under the purchase's category, so that category is net.
+CREATE TABLE IF NOT EXISTS reimbursements (
+    deposit_id INTEGER PRIMARY KEY REFERENCES transactions(id),
+    purchase_id INTEGER NOT NULL REFERENCES transactions(id),
+    amount REAL NOT NULL,
+    matched_by TEXT NOT NULL CHECK (matched_by IN ('auto', 'claude', 'human')),
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS merchant_index_meta (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL

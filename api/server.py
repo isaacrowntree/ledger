@@ -481,6 +481,11 @@ def api_summary_period():
     })
 
 
+# Spending and income views count a repayment from a person (see etl/reimburse.py)
+# as negative spending in the category of what it repaid, not as income: a
+# friend's $60 for a $300 dinner leaves Eating Out at $240. Cash views (the
+# transaction list's totals, transfers, balances) still count money as it moved.
+
 @app.route("/api/summary/monthly")
 def api_summary_monthly():
     conn = get_conn()
@@ -488,8 +493,8 @@ def api_summary_monthly():
 
     query = """
         SELECT strftime('%Y-%m', t.date) as month,
-               SUM(CASE WHEN t.amount < 0 THEN t.amount ELSE 0 END) as expenses,
-               SUM(CASE WHEN t.amount > 0 THEN t.amount ELSE 0 END) as income
+               SUM(CASE WHEN (t.amount < 0 OR t.id IN (SELECT deposit_id FROM reimbursements)) THEN t.amount ELSE 0 END) as expenses,
+               SUM(CASE WHEN (t.amount > 0 AND t.id NOT IN (SELECT deposit_id FROM reimbursements)) THEN t.amount ELSE 0 END) as income
         FROM transactions t
         JOIN accounts a ON t.account_id = a.id
     """
@@ -628,7 +633,7 @@ def api_summary_trends():
         FROM transactions t
         LEFT JOIN categories c ON t.category_id = c.id
         JOIN accounts a ON t.account_id = a.id
-        WHERE t.amount < 0
+        WHERE (t.amount < 0 OR t.id IN (SELECT deposit_id FROM reimbursements))
     """
     params = []
     if request.args.get("from"):
@@ -811,8 +816,8 @@ def api_year_review():
     # Monthly income/expenses
     monthly = conn.execute("""
         SELECT strftime('%Y-%m', t.date) as month,
-               SUM(CASE WHEN t.amount > 0 THEN t.amount ELSE 0 END) as income,
-               SUM(CASE WHEN t.amount < 0 THEN t.amount ELSE 0 END) as expenses
+               SUM(CASE WHEN (t.amount > 0 AND t.id NOT IN (SELECT deposit_id FROM reimbursements)) THEN t.amount ELSE 0 END) as income,
+               SUM(CASE WHEN (t.amount < 0 OR t.id IN (SELECT deposit_id FROM reimbursements)) THEN t.amount ELSE 0 END) as expenses
         FROM transactions t
         JOIN accounts a ON t.account_id = a.id
         WHERE strftime('%Y', t.date) = ? AND t.is_transfer = 0 AND a.account_type NOT IN ('loan')
@@ -835,7 +840,7 @@ def api_year_review():
         SELECT t.description, COUNT(*) as count, SUM(t.amount) as total
         FROM transactions t
         JOIN accounts a ON t.account_id = a.id
-        WHERE strftime('%Y', t.date) = ? AND t.amount < 0
+        WHERE strftime('%Y', t.date) = ? AND (t.amount < 0 OR t.id IN (SELECT deposit_id FROM reimbursements))
           AND t.is_transfer = 0 AND a.account_type NOT IN ('loan')
         GROUP BY UPPER(SUBSTR(t.description, 1, 40))
         ORDER BY total ASC LIMIT 20
@@ -855,8 +860,8 @@ def api_year_review():
     # Year-over-year comparison (previous year)
     prev_year = str(int(year) - 1)
     prev_monthly = conn.execute("""
-        SELECT SUM(CASE WHEN t.amount > 0 THEN t.amount ELSE 0 END) as income,
-               SUM(CASE WHEN t.amount < 0 THEN t.amount ELSE 0 END) as expenses
+        SELECT SUM(CASE WHEN (t.amount > 0 AND t.id NOT IN (SELECT deposit_id FROM reimbursements)) THEN t.amount ELSE 0 END) as income,
+               SUM(CASE WHEN (t.amount < 0 OR t.id IN (SELECT deposit_id FROM reimbursements)) THEN t.amount ELSE 0 END) as expenses
         FROM transactions t
         JOIN accounts a ON t.account_id = a.id
         WHERE strftime('%Y', t.date) = ? AND t.is_transfer = 0 AND a.account_type NOT IN ('loan')
@@ -874,14 +879,14 @@ def api_year_review():
     biggest_expense = conn.execute("""
         SELECT t.date, t.description, t.amount, a.name as account_name
         FROM transactions t JOIN accounts a ON t.account_id = a.id
-        WHERE strftime('%Y', t.date) = ? AND t.amount < 0 AND t.is_transfer = 0
+        WHERE strftime('%Y', t.date) = ? AND (t.amount < 0 OR t.id IN (SELECT deposit_id FROM reimbursements)) AND t.is_transfer = 0
         ORDER BY t.amount ASC LIMIT 5
     """, (year,)).fetchall()
 
     biggest_income = conn.execute("""
         SELECT t.date, t.description, t.amount, a.name as account_name
         FROM transactions t JOIN accounts a ON t.account_id = a.id
-        WHERE strftime('%Y', t.date) = ? AND t.amount > 0 AND t.is_transfer = 0
+        WHERE strftime('%Y', t.date) = ? AND (t.amount > 0 AND t.id NOT IN (SELECT deposit_id FROM reimbursements)) AND t.is_transfer = 0
         ORDER BY t.amount DESC LIMIT 5
     """, (year,)).fetchall()
 
@@ -963,7 +968,7 @@ def api_spreadsheet_outgoing():
         LEFT JOIN categories c ON t.category_id = c.id
         JOIN accounts a ON t.account_id = a.id
         WHERE t.date >= ? AND t.date <= ?
-          AND t.amount < 0
+          AND (t.amount < 0 OR t.id IN (SELECT deposit_id FROM reimbursements))
           AND t.is_transfer = 0
           AND a.account_type NOT IN ('loan')
         ORDER BY t.date, t.id
@@ -1003,7 +1008,7 @@ def api_spreadsheet_incoming():
         LEFT JOIN categories c ON t.category_id = c.id
         JOIN accounts a ON t.account_id = a.id
         WHERE t.date >= ? AND t.date <= ?
-          AND t.amount > 0
+          AND (t.amount > 0 AND t.id NOT IN (SELECT deposit_id FROM reimbursements))
           AND t.is_transfer = 0
           AND a.account_type NOT IN ('loan')
         ORDER BY t.date, t.id
@@ -1500,7 +1505,7 @@ def api_summary_economics():
         SELECT COALESCE(SUM(t.amount), 0) as total
         FROM transactions t
         JOIN accounts a ON t.account_id = a.id
-        WHERE t.amount < 0 AND strftime('%Y', t.date) = ?
+        WHERE (t.amount < 0 OR t.id IN (SELECT deposit_id FROM reimbursements)) AND strftime('%Y', t.date) = ?
           AND t.is_transfer = 0 AND a.account_type NOT IN ('loan')
     """, (str(year),)).fetchone()
     total_expenses = abs(expense_row["total"]) if expense_row else 0
@@ -1551,7 +1556,7 @@ def api_summary_economics():
         FROM transactions t
         JOIN categories c ON t.category_id = c.id
         JOIN accounts a ON t.account_id = a.id
-        WHERE t.amount < 0 AND strftime('%Y', t.date) = ?
+        WHERE (t.amount < 0 OR t.id IN (SELECT deposit_id FROM reimbursements)) AND strftime('%Y', t.date) = ?
           AND t.is_transfer = 0 AND a.account_type NOT IN ('loan')
           AND c.name != 'Uncategorized'
         GROUP BY c.name
@@ -1563,7 +1568,7 @@ def api_summary_economics():
         FROM transactions t
         JOIN categories c ON t.category_id = c.id
         JOIN accounts a ON t.account_id = a.id
-        WHERE t.amount < 0 AND strftime('%Y', t.date) = ?
+        WHERE (t.amount < 0 OR t.id IN (SELECT deposit_id FROM reimbursements)) AND strftime('%Y', t.date) = ?
           AND t.is_transfer = 0 AND a.account_type NOT IN ('loan')
           AND c.name != 'Uncategorized'
         GROUP BY c.name

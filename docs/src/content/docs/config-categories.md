@@ -75,7 +75,15 @@ Money in and money out are kept apart, so a merchant's refunds can be filed diff
 
 ### Similarity
 
-Merchant keys are embedded with `BAAI/bge-small-en-v1.5`, run locally through fastembed (no GPU, no network after the first model download of about 130 MB). The vectors live in the same SQLite file through sqlite-vec. Set `LEDGER_EMBEDDER=ngram` to use a character n-gram embedder instead: no model, fully deterministic, and the fallback when fastembed is not installed. Changing embedder rebuilds the index on the next run.
+Descriptions are embedded locally through fastembed (no GPU, no network after the first model download), and the vectors live in the same SQLite file through sqlite-vec. Each labelled merchant and each settled transaction is indexed from its raw description; guesses are never used as neighbours. Choose the model with `LEDGER_EMBEDDER`:
+
+| Value | Model | Size |
+|---|---|---|
+| `bge-small` (default) | BAAI/bge-small-en-v1.5, 384 dims | ~67 MB |
+| `bge-base` | BAAI/bge-base-en-v1.5, 768 dims | ~210 MB, about 3x slower; no better in testing |
+| `ngram` | character n-grams, no model | deterministic; used by the tests |
+
+If a model can't be loaded the next one down is used. Changing embedder rebuilds the index on the next run. Compare them on your own ledger with `ledger categorise --evaluate`.
 
 ## Source rules
 

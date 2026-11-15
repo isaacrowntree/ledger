@@ -155,10 +155,12 @@ Run `--seed` once after upgrading from the old regex rules, so the merchants alr
 **The export/import round trip.** `--export` writes every pending row (Uncategorized, or a nearest-merchant guess nobody confirmed) as JSON. Each row carries its 10 most similar filed merchants and their categories, and each category carries a few example merchants, so Claude can follow your own conventions. Answer in the form:
 
 ```json
-{"1234": {"category": "Eating Out", "confidence": 0.95}}
+{"1234": {"category": "Eating Out", "bucket": "sure"},
+ "1235": {"category": "Shopping", "bucket": "unsure",
+          "alternative": "Business: Equipment", "note": "could be work gear"}}
 ```
 
-`--import` files each answer. At confidence 0.9 or above the row is filed and its merchant is learned (origin `llm`). Below that the row is filed at confidence 0.5, so it stays flagged for review and teaches nothing. Rows a person confirmed since the export are skipped, and an unknown category name stops the import before anything is written.
+`--import` files each answer by its bucket. `sure`: the row is filed and its merchant is learned (origin `llm`). `likely`: the row is filed at confidence 0.5, so it stays flagged for review and teaches nothing. `unsure`: the row is filed under the best guess and the merchant goes on "Merchants to check" with the `alternative` and `note`; until someone decides, its later rows also file for review. Buckets rather than a numeric confidence, because LLM confidence scores cluster and say little. Rows a person confirmed since the export are skipped, and an unknown category name stops the import before anything is written.
 
 ### `ledger tag`
 
@@ -184,3 +186,20 @@ This starts the Flask server on [http://localhost:5050](http://localhost:5050) w
 ```sh
 python -m pytest tests/ -v
 ```
+
+## `ledger reimbursements`
+
+Links deposits from people to the purchases they pay back, and files each one in the purchase's category. A friend's $60 a day after a $300 dinner is a fifth of the bill: it is filed under Eating Out, so spending reports show the dinner net of it (cash views still show money as it moved).
+
+```sh
+ledger reimbursements --dry-run          # count matches
+ledger reimbursements                    # link the clear ones
+ledger reimbursements --export ambiguous.json
+ledger reimbursements --import answers.json   # {"<deposit id>": <purchase id or null>}
+```
+
+- **Group splits** are found first: three or more people sending the same per-head share (or a multiple, for a couple) within a few days of a shared bill, a small extra on top allowed, never more than the bill in total. Only meals, events, travel, transport, groceries, fitness and car costs.
+- **One-to-one**: the whole cost or an even share (1/2 to 1/6) within 1%, up to 30 days after the purchase or a week before; shares of a third or less only within 14 days. Clear when it fits one purchase, or only one within 14 days.
+- Never matched: the same payer sending the same amount three or more times (rent or board on a schedule), refunds from Medicare or insurers.
+- Purchases in Business, Rental, Strata or Mortgage categories are never linked automatically: a repayment there changes a deduction.
+- Ambiguous ones are exported with their candidate purchases for Claude to decide.

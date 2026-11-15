@@ -9,10 +9,14 @@ from etl.merchant_store import load_vec
 from etl.models import RawTransaction
 
 
-# Claude's confidence at or above which its choice is filed and its merchant
-# learned. In the blind trial on new merchants, 0.9+ was right 97% of the time.
-LLM_LEARN_CONFIDENCE = 0.9
-# Rows below that are filed but stay flagged for review at this confidence.
+# Claude answers with a bucket, not a number: LLMs give much the same numeric
+# confidence to everything, so a 0.9 cut-off would rest on a number that means
+# little. The buckets say what happens next:
+#   sure    filed, and the merchant learned (origin 'llm')
+#   likely  filed, flagged for review, nothing learned
+#   unsure  filed under the best guess, and the merchant goes on the owner's
+#           "Merchants to check" with the alternative and a note
+BUCKETS = ("sure", "likely", "unsure")
 LLM_REVIEW_CONFIDENCE = 0.5
 
 
@@ -208,8 +212,13 @@ def _export(conn, categorizer: Categorizer, path: Path) -> None:
         "instructions": (
             "File each item under exactly one of `categories`. similar_filed shows how this person "
             "filed the most similar merchants; category_examples shows what each category holds. "
-            "Answer as {\"<id>\": {\"category\": ..., \"confidence\": 0-1}}. Be calibrated: "
-            f"{LLM_LEARN_CONFIDENCE}+ files the row and teaches its merchant; lower is filed but flagged for review."),
+            "Answer as {\"<id>\": {\"category\": ..., \"bucket\": \"sure\"|\"likely\"|\"unsure\", "
+            "\"alternative\": optional category, \"note\": optional, <= 12 words}}. "
+            "sure: the merchant type is unambiguous; the row is filed and the merchant learned for good. "
+            "likely: probably right; filed and flagged for review. "
+            "unsure: you can't tell what was bought or why, or the same merchant can mean different "
+            "things on different rows; filed under your best guess and sent to the owner with the "
+            "alternative and note. Use unsure for anything tax-relevant you are not sure of."),
         "categories": [n for n in sorted(names.values()) if n != "Uncategorized"],
         "category_examples": examples,
         "items": items,
@@ -218,15 +227,20 @@ def _export(conn, categorizer: Categorizer, path: Path) -> None:
 
 
 def _import(conn, categorizer: Categorizer, path: Path, dry_run: bool) -> None:
-    """File Claude's answers. Confident ones also teach the merchant (origin 'llm')."""
+    """File Claude's answers by bucket (see BUCKETS)."""
     import json
     answers = json.loads(path.read_text())
     ids = {name: cat_id for cat_id, name in _names(conn).items()}
     transfers = ids.get("Transfers")
-    bad = {k: v["category"] for k, v in answers.items() if v.get("category") not in ids}
+    bad = {k: v.get("category") for k, v in answers.items() if v.get("category") not in ids}
+    bad |= {k: f"alternative {v['alternative']}" for k, v in answers.items()
+            if v.get("alternative") and v["alternative"] not in ids}
+    bad |= {k: f"bucket {v.get('bucket')}" for k, v in answers.items() if v.get("bucket") not in BUCKETS}
     if bad:
-        raise SystemExit(f"Unknown categories, nothing written: {bad}")
-    learned = flagged = skipped = 0
+        raise SystemExit(f"Unknown categories or buckets, nothing written: {bad}")
+    counts = dict.fromkeys(BUCKETS, 0)
+    skipped = 0
+    store = categorizer.store
     for txn_id, ans in answers.items():
         row = conn.execute(
             "SELECT id, description, amount, category_confidence FROM transactions WHERE id = ?",
@@ -234,23 +248,27 @@ def _import(conn, categorizer: Categorizer, path: Path, dry_run: bool) -> None:
         if row is None or (row["category_confidence"] or 0) >= 1:
             skipped += 1     # gone, or confirmed by a person since the export
             continue
-        cat_id = ids[ans["category"]]
-        confident = float(ans.get("confidence", 0)) >= LLM_LEARN_CONFIDENCE
+        bucket = ans["bucket"]
+        counts[bucket] += 1
         if dry_run:
-            learned += confident; flagged += not confident
             continue
+        cat_id = ids[ans["category"]]
         conn.execute(
             """UPDATE transactions SET category_id = ?, category_confidence = ?,
                    is_transfer = CASE WHEN ? = ? THEN 1 WHEN category_id = ? THEN 0 ELSE is_transfer END
                WHERE id = ?""",
-            (cat_id, CONFIDENCE["llm"] if confident else LLM_REVIEW_CONFIDENCE,
+            (cat_id, CONFIDENCE["llm"] if bucket == "sure" else LLM_REVIEW_CONFIDENCE,
              cat_id, transfers, transfers, row["id"]))
-        if confident:
-            categorizer.store.learn(row["description"], row["amount"], cat_id, origin="llm", commit=False)
-            learned += 1
-        else:
-            flagged += 1
+        if bucket == "sure":
+            store.learn(row["description"], row["amount"], cat_id, origin="llm", commit=False)
+        elif bucket == "unsure":
+            key = store.learn(row["description"], row["amount"], cat_id, origin="llm", commit=False)
+            if key:
+                alt = ids.get(ans.get("alternative") or "")
+                store.flag(key, "in" if row["amount"] > 0 else "out", alt,
+                           ans.get("note") or "Claude couldn't tell", commit=False)
     if not dry_run:
         conn.commit()
-    print(f"{learned} filed and learned, {flagged} filed for review, {skipped} skipped"
+    print(f"{counts['sure']} filed and learned, {counts['likely']} filed for review, "
+          f"{counts['unsure']} sent to Merchants to check, {skipped} skipped"
           + (" (dry run, nothing written)" if dry_run else ""))

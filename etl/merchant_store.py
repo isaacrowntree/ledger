@@ -248,12 +248,12 @@ class MerchantStore:
 
     # --- reads -------------------------------------------------------------
 
-    def lookup(self, description: str, amount: float) -> tuple[int, str] | None:
-        """(category_id, origin) when this exact merchant is labelled."""
+    def lookup(self, description: str, amount: float) -> tuple[int, str, bool] | None:
+        """(category_id, origin, needs_review) when this exact merchant is labelled."""
         row = self.conn.execute(
-            "SELECT category_id, origin FROM merchant_labels WHERE merchant = ? AND direction = ?",
+            "SELECT category_id, origin, needs_review FROM merchant_labels WHERE merchant = ? AND direction = ?",
             (merchant_key(description), direction_of(amount))).fetchone()
-        return (row[0], row[1]) if row else None
+        return (row[0], row[1], bool(row[2])) if row else None
 
     def nearest(self, description: str, amount: float, k: int = 10,
                 exclude_txn: int | None = None) -> list[Neighbour]:
@@ -265,7 +265,8 @@ class MerchantStore:
         found = [Neighbour(r[0], r[1], 1.0 - r[2], r[3]) for r in self.conn.execute(
             """SELECT l.merchant, l.category_id, v.distance, l.example
                FROM merchant_vectors v JOIN merchant_labels l ON l.id = v.label_id
-               WHERE v.embedding MATCH ? AND k = ? AND v.direction = ?""", (vec, k, d))]
+               WHERE v.embedding MATCH ? AND k = ? AND v.direction = ?
+                 AND l.needs_review = 0""", (vec, k, d))]
         # Ask for more than k: untrusted rows are dropped after the search.
         for r in self.conn.execute(
                 f"""SELECT t.id, t.description, t.category_id, v.distance

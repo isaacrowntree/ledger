@@ -58,22 +58,58 @@ def test_export_lists_pending_rows_with_context(ledger, tmp_path):
     assert "WOOLWORTHS" in " ".join(data["category_examples"]["Groceries"]).upper()
 
 
-def test_import_files_and_learns_only_confident_answers(ledger, tmp_path):
+def test_import_acts_on_each_bucket(ledger, tmp_path):
     conn, add = ledger
     sure = add("Visa Purchase - Receipt 111 EXAMPLE LAKSA HOUSE EXAMPLETOWN", -18.0)
-    unsure = add("ZQXV HOLDINGS", -60.0)
+    likely = add("ZQXV HOLDINGS", -60.0)
+    unsure = add("EXAMPLE TRADING PTY LTD", -900.0)
     conn.commit()
     answers = tmp_path / "answers.json"
     answers.write_text(json.dumps({
-        str(sure): {"category": "Eating Out", "confidence": 0.95},
-        str(unsure): {"category": "Shopping", "confidence": 0.6},
+        str(sure): {"category": "Eating Out", "bucket": "sure"},
+        str(likely): {"category": "Shopping", "bucket": "likely"},
+        str(unsure): {"category": "Shopping", "bucket": "unsure",
+                      "alternative": "Business: Equipment", "note": "could be work gear"},
     }))
     categorise_cmd.run(CONFIG, import_=str(answers))
+    review = categorise_cmd.LLM_REVIEW_CONFIDENCE
     assert tuple(_row(conn, sure))[:2] == ("Eating Out", CONFIDENCE["llm"])
-    assert tuple(_row(conn, unsure))[:2] == ("Shopping", categorise_cmd.LLM_REVIEW_CONFIDENCE)
-    labels = dict(conn.execute("SELECT merchant, origin FROM merchant_labels").fetchall())
-    assert labels.get("EXAMPLE LAKSA HOUSE EXAMPLETOWN") == "llm"
-    assert "ZQXV HOLDINGS" not in labels
+    assert tuple(_row(conn, likely))[:2] == ("Shopping", review)
+    assert tuple(_row(conn, unsure))[:2] == ("Shopping", review)
+    labels = {r[0]: r[1:] for r in conn.execute(
+        "SELECT l.merchant, l.origin, l.needs_review, a.name, l.note FROM merchant_labels l "
+        "LEFT JOIN categories a ON a.id = l.alt_category_id")}
+    assert labels["EXAMPLE LAKSA HOUSE EXAMPLETOWN"] == ("llm", 0, None, None)
+    assert "ZQXV HOLDINGS" not in labels                     # likely: nothing learned
+    assert labels["EXAMPLE TRADING PTY LTD"] == ("llm", 1, "Business: Equipment", "could be work gear")
+
+
+def test_a_flagged_merchant_files_later_rows_for_review(ledger, tmp_path):
+    conn, add = ledger
+    t = add("EXAMPLE TRADING PTY LTD", -900.0)
+    conn.commit()
+    answers = tmp_path / "answers.json"
+    answers.write_text(json.dumps({str(t): {"category": "Shopping", "bucket": "unsure"}}))
+    categorise_cmd.run(CONFIG, import_=str(answers))
+    from etl.categorizer import Categorizer
+    from etl.embedding import NgramEmbedder
+    from etl.models import RawTransaction
+    cat = Categorizer(conn, CONFIG, embedder=NgramEmbedder())
+    _, conf = cat.categorize(RawTransaction(date="2026-04-01", description="EXAMPLE TRADING PTY LTD",
+                                            amount=-50.0, source_type="ing"))
+    assert conf == CONFIDENCE["review"]
+    assert all(n.merchant != "EXAMPLE TRADING PTY LTD" for n in cat.store.nearest("EXAMPLE TRADING", -50.0))
+
+
+def test_import_refuses_a_missing_bucket(ledger, tmp_path):
+    conn, add = ledger
+    t = add("SOMETHING", -1.0)
+    conn.commit()
+    answers = tmp_path / "answers.json"
+    answers.write_text(json.dumps({str(t): {"category": "Shopping", "confidence": 0.99}}))
+    with pytest.raises(SystemExit, match="bucket"):
+        categorise_cmd.run(CONFIG, import_=str(answers))
+    assert _row(conn, t)["name"] == "Uncategorized"
 
 
 def test_import_never_touches_a_row_a_person_confirmed(ledger, tmp_path):
@@ -81,7 +117,7 @@ def test_import_never_touches_a_row_a_person_confirmed(ledger, tmp_path):
     mine = add("MY CAFE", -4.0, "Coffee", confidence=1.0)
     conn.commit()
     answers = tmp_path / "answers.json"
-    answers.write_text(json.dumps({str(mine): {"category": "Eating Out", "confidence": 0.99}}))
+    answers.write_text(json.dumps({str(mine): {"category": "Eating Out", "bucket": "sure"}}))
     categorise_cmd.run(CONFIG, import_=str(answers))
     assert _row(conn, mine)["name"] == "Coffee"
 
@@ -91,7 +127,7 @@ def test_import_refuses_unknown_categories_and_writes_nothing(ledger, tmp_path):
     t = add("SOMETHING", -1.0)
     conn.commit()
     answers = tmp_path / "answers.json"
-    answers.write_text(json.dumps({str(t): {"category": "Eatng Out", "confidence": 0.99}}))
+    answers.write_text(json.dumps({str(t): {"category": "Eatng Out", "bucket": "sure"}}))
     with pytest.raises(SystemExit, match="Eatng Out"):
         categorise_cmd.run(CONFIG, import_=str(answers))
     assert _row(conn, t)["name"] == "Uncategorized"
@@ -102,7 +138,7 @@ def test_import_into_transfers_sets_the_flag(ledger, tmp_path):
     t = add("Osko Payment - Receipt 1 Transfer To Example Savings", -500.0)
     conn.commit()
     answers = tmp_path / "answers.json"
-    answers.write_text(json.dumps({str(t): {"category": "Transfers", "confidence": 0.95}}))
+    answers.write_text(json.dumps({str(t): {"category": "Transfers", "bucket": "sure"}}))
     categorise_cmd.run(CONFIG, import_=str(answers))
     assert _row(conn, t)["is_transfer"] == 1
 

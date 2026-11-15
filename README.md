@@ -186,6 +186,7 @@ ledger categorise --evaluate 2025-07-01   # Score the categoriser on rows from a
 ledger categorise --stats        # Labelled merchants by origin
 ledger categorise --export pending.json   # Pending rows + similar merchants, for Claude
 ledger categorise --import answers.json   # File Claude's answers
+ledger reimbursements           # Link repayments from people to what they repaid
 ```
 
 ### Ingest-time validation
@@ -277,7 +278,7 @@ etl/                 # Extract-Transform-Load pipeline
   categorizer.py     # Source rule → merchant label → nearest merchants
   merchant.py        # Normalised merchant key (strips receipt numbers, dates, suburbs)
   merchant_store.py  # Merchant labels and the sqlite-vec similarity index
-  embedding.py       # Local embeddings (bge-small via fastembed; n-gram fallback)
+  embedding.py       # Local embeddings (bge-small, or bge-base, via fastembed; n-gram fallback)
   categorise_cmd.py  # `ledger categorise`: seed, rerun, evaluate, export/import
   tagger.py          # Multi-tag assignment
   splitter.py        # Business expense split engine
