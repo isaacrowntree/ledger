@@ -155,6 +155,22 @@ def main():
     dedup_parser = sub.add_parser("dedup", help="Find and resolve cross-account duplicate transactions")
     dedup_parser.add_argument("--dry-run", action="store_true", help="Preview without writing to DB")
 
+    cat_parser = sub.add_parser(
+        "categorise", help="Label merchants, recategorise, or measure the categoriser")
+    cat_mode = cat_parser.add_mutually_exclusive_group(required=True)
+    cat_mode.add_argument("--seed", action="store_true",
+                          help="Label every merchant from the categories already in the ledger")
+    cat_mode.add_argument("--rerun", action="store_true",
+                          help="Recategorise every row you have not confirmed")
+    cat_mode.add_argument("--evaluate", metavar="YYYY-MM-DD",
+                          help="Learn from rows before this date, score the guesses for rows after it")
+    cat_mode.add_argument("--stats", action="store_true", help="Show how many merchants are labelled")
+    cat_mode.add_argument("--export", metavar="FILE",
+                          help="Write pending rows, with similar filed merchants, as JSON for Claude to file")
+    cat_mode.add_argument("--import", dest="import_", metavar="FILE",
+                          help="File Claude's answers ({id: {category, confidence}})")
+    cat_parser.add_argument("--dry-run", action="store_true", help="With --rerun or --import: show changes without writing")
+
     tag_parser = sub.add_parser("tag", help="Bulk tag/recategorize transactions matching a description pattern")
     tag_parser.add_argument("--pattern", required=True, help="SQL LIKE pattern matched against description (case-insensitive)")
     tag_parser.add_argument("--from", dest="date_from", help="Start date YYYY-MM-DD")
@@ -186,6 +202,11 @@ def main():
         cmd_cgt(fy=args.fy, carried_forward_losses=args.carried_forward_losses)
     elif args.command == "dedup":
         cmd_dedup(dry_run=args.dry_run)
+    elif args.command == "categorise":
+        from etl.categorise_cmd import run as cmd_categorise
+        cmd_categorise(CONFIG_DIR / "categories.yaml", seed=args.seed, rerun=args.rerun,
+                       evaluate=args.evaluate, stats=args.stats, dry_run=args.dry_run,
+                       export=args.export, import_=args.import_)
     elif args.command == "tag":
         cmd_tag(
             pattern=args.pattern,

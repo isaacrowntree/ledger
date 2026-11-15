@@ -34,7 +34,7 @@ Never commit straight to `main`. For every change:
 ## Running things
 
 - Tests:
-  `uv run --no-project --with pyyaml --with pdfplumber --with flask --with flask-cors --with python-dotenv --with pydantic --with pytest python -m pytest -q`
+  `uv run --no-project --with pyyaml --with pdfplumber --with flask --with flask-cors --with python-dotenv --with pydantic --with numpy --with sqlite-vec --with fastembed --with pytest python -m pytest -q`
   (takes a few minutes). Dependencies are listed in `pyproject.toml`.
 - API and dashboard: the same `uv run ...` without pytest, then `python -m api`.
   It serves on http://127.0.0.1:5050. Use 127.0.0.1, because `localhost` can
@@ -51,9 +51,18 @@ Never commit straight to `main`. For every change:
 
 - Every API endpoint that writes takes its body through a strict pydantic
   model in `api/schemas.py`. Add one for any new write endpoint.
-- Changing a transaction's category also teaches a merchant rule
-  (`category_rules_learned`). For one-off recategorisations (one Amazon order
-  that was business equipment), delete the learned rule afterwards.
+- Categories come from merchant labels, not description patterns (see
+  `etl/categorizer.py`). Changing a transaction's category in the dashboard
+  labels its merchant; for a one-off (one Amazon order that was business
+  equipment) send `learn: false`. There are no `type: regex` category rules.
+- Claude does the categorising: `ledger categorise --export pending.json`, file
+  each row (use `similar_filed` and `category_examples` to follow the owner's
+  conventions, calibrated confidence), then `ledger categorise --import`.
+  0.9+ files the row and teaches its merchant; lower is filed for review.
+  Merchants needing a person's call go on the dashboard's "Merchants to check".
+- `ledger categorise --evaluate YYYY-MM-DD` scores the categoriser on rows from
+  that date learning only from earlier ones. Run it after changing
+  `etl/merchant.py`, the embedder or the thresholds.
 - Depreciating assets go in `config/depreciation.yaml` with a `paid:` entry, so
   the purchase is claimed as decline in value and not also as a business
   expense. Diminishing-value years are worked out when `years:` is omitted.

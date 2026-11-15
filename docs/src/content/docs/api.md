@@ -10,7 +10,7 @@ The Flask API serves data to the dashboard and can be used directly for custom r
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `GET` | `/api/transactions` | List transactions with filters |
-| `PATCH` | `/api/transactions/<id>` | Update category or notes |
+| `PATCH` | `/api/transactions/<id>` | Update category, notes or reviewed flag |
 | `PATCH` | `/api/transactions/<id>/split` | Override business split percentage |
 
 ### GET /api/transactions
@@ -28,6 +28,8 @@ Query parameters:
 | `exclude_transfers` | Exclude transfer transactions (default: `true`) |
 | `limit` | Max results |
 
+Each Uncategorized row (up to the first 300) carries `suggestions`: up to three categories from the most similar filed merchants, each with a `score` (its share of their similarity-weighted vote). Other rows have an empty list.
+
 Example:
 
 ```sh
@@ -36,12 +38,18 @@ curl "http://localhost:5050/api/transactions?from=2025-01-01&category=Groceries&
 
 ### PATCH /api/transactions/\<id\>
 
-Update a transaction's category or notes. When changing category, the system stores a learned rule for future auto-categorisation.
+Update a transaction's category, notes, or `reviewed` flag. Setting a category confirms the row (confidence 1.0) and, by default, labels its merchant so later transactions from it are filed the same way. Pass `"learn": false` for a one-off that leaves the merchant alone.
 
 ```sh
 curl -X PATCH http://localhost:5050/api/transactions/42 \
   -H "Content-Type: application/json" \
   -d '{"category_name": "Eating Out", "notes": "Dinner with friends"}'
+```
+
+The response lists the other unconfirmed rows from the same merchant (and direction) that are filed under a different category, so a client can offer to move them:
+
+```json
+{"ok": true, "same_merchant": [57, 91]}
 ```
 
 ### PATCH /api/transactions/\<id\>/split
@@ -55,6 +63,27 @@ curl -X PATCH http://localhost:5050/api/transactions/42/split \
 ```
 
 Set `business_pct` to `0` to remove the split.
+
+## Merchants
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/merchants/review` | Merchants flagged for a person's decision |
+| `POST` | `/api/merchants/<id>/decide` | File a flagged merchant and refile its rows |
+
+### GET /api/merchants/review
+
+Each entry has `id`, `merchant` (the normalised key), `direction` (`in` or `out`), `category` (the current label), `alternative` (the other candidate, if any), `note`, `origin`, `rows`, `total`, `first`, `last`, and up to three `examples` of the description as printed. Sorted by the size of `total`, largest first.
+
+### POST /api/merchants/\<id\>/decide
+
+```sh
+curl -X POST http://localhost:5050/api/merchants/7/decide \
+  -H "Content-Type: application/json" \
+  -d '{"category_name": "Groceries"}'
+```
+
+Labels the merchant `human`, clears the flag, and refiles every unconfirmed row from it at confidence 1.0. Returns `{"ok": true, "refiled": <count>}`.
 
 ## Summaries
 

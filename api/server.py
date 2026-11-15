@@ -9,6 +9,8 @@ from api import schemas
 from api.schemas import body, sql_value
 
 from etl import db
+from etl.merchant import merchant_key
+from etl.merchant_store import MerchantStore
 from etl.cpi import sync_cpi, get_cpi_for_year, get_cpi_history, get_latest_cpi, adjust_for_inflation
 from etl.dedup import find_duplicates, resolve_duplicates
 from etl.reconcile import current_balance
@@ -171,14 +173,76 @@ def api_transactions():
         params.append(int(request.args["limit"]))
     rows = conn.execute(query, params).fetchall()
 
+    store = None
+    names = None
     results = []
     for r in rows:
         d = dict(r)
         d["tags"] = [t["tag"] for t in conn.execute(
             "SELECT tag FROM transaction_tags WHERE transaction_id = ?", (d["id"],))]
+        d["suggestions"] = []
+        if d["category_name"] in (None, "Uncategorized") and len(results) < SUGGEST_LIMIT:
+            if store is None:
+                store = MerchantStore(conn)
+                names = {c["id"]: c["name"] for c in conn.execute("SELECT id, name FROM categories")}
+            d["suggestions"] = [
+                {"category": names[s.category_id], "score": round(s.score, 2)}
+                for s in store.suggest(d["description"], d["amount"], top=3, exclude_txn=d["id"])]
         results.append(d)
     conn.close()
     return jsonify(results)
+
+
+# Uncategorized rows that get suggestions in one listing. Each costs one
+# embedding and one index query, a few milliseconds.
+SUGGEST_LIMIT = 300
+
+
+@app.route("/api/merchants/review")
+def api_merchants_to_review():
+    """Merchants someone should file: Claude and the old rules disagreed, or Claude was unsure."""
+    conn = get_conn()
+    store = MerchantStore(conn)
+    labels = conn.execute(
+        """SELECT l.id, l.merchant, l.direction, l.note, l.origin, c.name AS category, a.name AS alternative
+           FROM merchant_labels l JOIN categories c ON c.id = l.category_id
+           LEFT JOIN categories a ON a.id = l.alt_category_id
+           WHERE l.needs_review = 1""").fetchall()
+    # One pass over the ledger, grouped by merchant, rather than a scan per label.
+    wanted = {(l["merchant"], l["direction"]) for l in labels}
+    rows: dict = {}
+    for t in conn.execute("SELECT description, amount, date FROM transactions ORDER BY date DESC"):
+        k = (merchant_key(t["description"]), "in" if t["amount"] > 0 else "out")
+        if k in wanted:
+            rows.setdefault(k, []).append(t)
+    out = []
+    for l in labels:
+        rs = rows.get((l["merchant"], l["direction"]), [])
+        examples = list(dict.fromkeys(r["description"] for r in rs))[:3]
+        out.append({**dict(l), "rows": len(rs), "total": round(sum(r["amount"] for r in rs), 2),
+                    "first": rs[-1]["date"] if rs else None, "last": rs[0]["date"] if rs else None,
+                    "examples": examples})
+    conn.close()
+    # Biggest money first: those matter most to the reports.
+    out.sort(key=lambda m: -abs(m["total"]))
+    return jsonify(out)
+
+
+@app.route("/api/merchants/<int:label_id>/decide", methods=["POST"])
+def api_decide_merchant(label_id: int):
+    data = body(schemas.MerchantDecision)
+    conn = get_conn()
+    cat = conn.execute("SELECT id FROM categories WHERE name = ?", (data.category_name,)).fetchone()
+    if not cat:
+        conn.close()
+        abort(400, description=f"no category named {data.category_name!r}")
+    try:
+        ids = MerchantStore(conn).decide(label_id, cat["id"])
+    except KeyError:
+        conn.close()
+        abort(404, description=f"no merchant label {label_id}")
+    conn.close()
+    return jsonify({"ok": True, "refiled": len(ids)})
 
 
 @app.route("/api/transactions/summary")
@@ -201,11 +265,23 @@ def api_transactions_summary():
     return jsonify(d)
 
 
+def _same_merchant_filed_elsewhere(conn, txn_id: int, description: str, amount: float,
+                                   category_id: int) -> list[int]:
+    """Unconfirmed rows from the same merchant (and direction) under another category."""
+    key = merchant_key(description)
+    rows = conn.execute(
+        "SELECT id, description FROM transactions WHERE id != ? AND category_id IS NOT ? "
+        "AND COALESCE(category_confidence, 0) < 1 AND (amount > 0) = ?",
+        (txn_id, category_id, amount > 0)).fetchall()
+    return [r["id"] for r in rows if merchant_key(r["description"]) == key]
+
+
 @app.route("/api/transactions/<int:txn_id>", methods=["PATCH"])
 def api_update_transaction(txn_id: int):
     data = body(schemas.TransactionUpdate)
     conn = get_conn()
-    txn_row = conn.execute("SELECT description FROM transactions WHERE id = ?", (txn_id,)).fetchone()
+    same_merchant: list[int] = []
+    txn_row = conn.execute("SELECT description, amount FROM transactions WHERE id = ?", (txn_id,)).fetchone()
     if not txn_row:
         conn.close()
         abort(404, description=f"no transaction {txn_id}")
@@ -221,14 +297,11 @@ def api_update_transaction(txn_id: int):
             "UPDATE transactions SET category_id = ?, category_confidence = 1.0 WHERE id = ?",
             (cat_row["id"], txn_id),
         )
-        # Learn this categorization
-        conn.execute(
-            """INSERT INTO category_rules_learned (description_pattern, category_id, times_seen)
-            VALUES (?, ?, 1)
-            ON CONFLICT(description_pattern)
-            DO UPDATE SET category_id = excluded.category_id, times_seen = times_seen + 1""",
-            (txn_row["description"].upper(), cat_row["id"]),
-        )
+        if data.learn:
+            # File the merchant, so its later transactions land here by themselves.
+            MerchantStore(conn).learn(txn_row["description"], txn_row["amount"], cat_row["id"], commit=False)
+            same_merchant = _same_merchant_filed_elsewhere(
+                conn, txn_id, txn_row["description"], txn_row["amount"], cat_row["id"])
 
     if data.notes is not None:
         conn.execute("UPDATE transactions SET notes = ? WHERE id = ?", (data.notes or None, txn_id))
@@ -240,7 +313,7 @@ def api_update_transaction(txn_id: int):
 
     conn.commit()
     conn.close()
-    return jsonify({"ok": True})
+    return jsonify({"ok": True, "same_merchant": same_merchant})
 
 
 @app.route("/api/categories")

@@ -59,10 +59,29 @@ CREATE TABLE IF NOT EXISTS currency_rates (
     UNIQUE(date, from_currency, to_currency)
 );
 
-CREATE TABLE IF NOT EXISTS category_rules_learned (
-    description_pattern TEXT PRIMARY KEY,
-    category_id INTEGER REFERENCES categories(id),
-    times_seen INTEGER DEFAULT 1
+-- One row per merchant (see etl/merchant.py): the category it is filed under.
+-- The vector index over these rows (merchant_vectors) is a sqlite-vec table
+-- created by etl/merchant_store.py, because its width depends on the embedder.
+CREATE TABLE IF NOT EXISTS merchant_labels (
+    id INTEGER PRIMARY KEY,
+    merchant TEXT NOT NULL,
+    direction TEXT NOT NULL CHECK (direction IN ('in', 'out')),
+    category_id INTEGER NOT NULL REFERENCES categories(id),
+    origin TEXT NOT NULL CHECK (origin IN ('human', 'seed', 'llm', 'bootstrap')),
+    times_seen INTEGER NOT NULL DEFAULT 1,
+    example TEXT,           -- one description as the bank printed it, for context
+    -- Set when someone should choose between this category and alt_category_id
+    -- (e.g. Claude and the old rules disagreed). Cleared by a person's decision.
+    needs_review INTEGER NOT NULL DEFAULT 0,
+    alt_category_id INTEGER REFERENCES categories(id),
+    note TEXT,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (merchant, direction)
+);
+
+CREATE TABLE IF NOT EXISTS merchant_index_meta (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS transaction_tags (

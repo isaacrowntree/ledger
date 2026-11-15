@@ -1,15 +1,15 @@
 ---
 title: Categories Configuration
-description: How to define categories, regex matching rules, and tag rules in categories.yaml.
+description: How to define categories, source rules, merchants, and tag rules in categories.yaml.
 ---
 
-The file `config/categories.yaml` defines spending categories, auto-categorisation rules, and tag rules. Copy from the example:
+The file `config/categories.yaml` defines spending categories, source rules, the merchants that seed the categoriser, and tag rules. Copy from the example:
 
 ```sh
 cp config/categories.yaml.example config/categories.yaml
 ```
 
-The file has three sections: `categories`, `rules`, and `tag_rules`.
+The file has four sections: `categories`, `rules`, `merchants`, and `tag_rules` (plus optional `shared_rules`).
 
 ## Categories
 
@@ -50,13 +50,36 @@ categories:
 
 **Naming convention:** Categories starting with `Business:` are automatically allocated at 100% to your business in the split engine. Categories starting with `Rental:` are for rental property expenses.
 
-## Rules
+## How a transaction gets its category
 
-Rules assign categories to transactions automatically. They are matched **top-to-bottom** and **first match wins**.
+The categoriser tries these in order and stops at the first that answers:
 
-### Rule types
+1. **Source rules** -- every row from a source (e.g. Airbnb payouts) belongs to one category.
+2. **The merchant's own label** -- if this merchant has been filed before, it goes where the merchant is filed.
+3. **The nearest labelled merchants** -- a merchant seen for the first time is compared with the ones you have already filed, using a local vector index. If the closest ones are similar enough and mostly agree, their category is used.
+4. Otherwise the row stays **Uncategorized**, and the Transactions view shows the nearest merchants' categories as one-click suggestions.
 
-**Source-based rules** match all transactions from a source:
+There are no description patterns to maintain. Filing a transaction in the dashboard labels its merchant, which covers every later visit to it.
+
+### Merchant keys
+
+A merchant is matched on a normalised key, not the raw description. Receipt numbers, dates, card digits, reference codes, foreign-currency amounts and trailing suburbs or states are stripped, so these are all the same merchant:
+
+```
+WOOLWORTHS      0101     EXAMPLETOWN       NS
+WOOLWORTHS 1234 SYDNEY NSW
+WOOLWORTHS
+```
+
+Money in and money out are kept apart, so a merchant's refunds can be filed differently from its charges.
+
+### Similarity
+
+Merchant keys are embedded with `BAAI/bge-small-en-v1.5`, run locally through fastembed (no GPU, no network after the first model download of about 130 MB). The vectors live in the same SQLite file through sqlite-vec. Set `LEDGER_EMBEDDER=ngram` to use a character n-gram embedder instead: no model, fully deterministic, and the fallback when fastembed is not installed. Changing embedder rebuilds the index on the next run.
+
+## Source rules
+
+`rules:` holds only source rules. Each matches every transaction from a source:
 
 ```yaml
 rules:
@@ -65,82 +88,41 @@ rules:
     category: Airbnb Income
 ```
 
-**Regex rules** match against the transaction description:
+The old `type: regex` and `type: exact` category rules no longer exist. List the merchants under `merchants:` instead.
+
+## Merchants
+
+`merchants:` maps a description, written as it appears on a statement, to a category. These seed the categoriser before it has seen your own filing:
 
 ```yaml
-  - type: regex
-    pattern: "WOOLWORTHS|COLES |ALDI |IGA |HARRIS FARM|COSTCO"
-    category: Groceries
+merchants:
+  WOOLWORTHS: Groceries
+  COLES: Groceries
+  UBER EATS: Eating Out
+  NETFLIX.COM: Subscriptions
+  NAMECHEAP.COM: "Business: Hosting & Infrastructure"
+  SALARY DEPOSIT EMPLOYER PTY LTD: Salary
 ```
 
-Patterns are matched case-insensitively against the uppercase description.
+Tips:
+- Copy the description from a real statement line. Noise is ignored: receipt numbers, dates, card digits, reference codes, trailing suburbs and states, and how it was paid (`Visa Purchase`, `Direct Debit`, `Osko Payment` and similar), so one entry covers every bank that prints the merchant.
+- You do not need every merchant. A few per category is enough for the nearest-neighbour step to file similar ones.
+- A category you set in the dashboard always wins over this list. Every category named here must exist under `categories:`.
 
-### Rule ordering matters
+### Where labels come from
 
-Rules are evaluated top-to-bottom. Put specific patterns before generic ones:
+Each merchant label records its origin. A weaker origin never overwrites a stronger one:
 
-```yaml
-rules:
-  # Specific: credit card interest (before mortgage interest)
-  - type: regex
-    pattern: "INTEREST CHARGED"
-    category: Fees & Charges
+| Origin | Set by | Confidence written to rows |
+|--------|--------|------------|
+| `human` | You, changing a category in the dashboard or choosing on "Merchants to check" | 0.95 |
+| `seed` | The `merchants:` list in this file | 0.9 |
+| `llm` | Claude, when it was confident (`ledger categorise --import`) | 0.85 |
+| `bootstrap` | The categories already in your ledger (`ledger categorise --seed`) | 0.9 |
 
-  # Generic: mortgage interest
-  - type: regex
-    pattern: "INTEREST CHARGE"
-    category: Mortgage
-```
+Source rules give 0.95, a nearest-merchant guess 0.6, and Uncategorized 0.0. Confidence 1.0 is reserved for rows a person confirmed, which keeps the "needs review" flag working.
 
-Business rules should go near the top so they match before personal categories:
-
-```yaml
-rules:
-  # Business hosting (matched first)
-  - type: regex
-    pattern: "NAMECHEAP|DIGITAL ?OCEAN|CLOUDFLARE|AWS"
-    category: "Business: Hosting & Infrastructure"
-
-  # Business software
-  - type: regex
-    pattern: "GITHUB|FIGMA|ADOBE|OPENAI|ANTHROPIC"
-    category: "Business: Software & Subscriptions"
-
-  # Personal shopping (matched later)
-  - type: regex
-    pattern: "AMAZON|EBAY"
-    category: Shopping
-```
-
-### Adding a new merchant
-
-To add a merchant, append a regex rule. If the merchant name appears differently across banks, use alternation:
-
-```yaml
-  - type: regex
-    pattern: "UBER ?EATS|DOORDASH|MENULOG|DELIVEROO"
-    category: Eating Out
-```
-
-Tips for writing patterns:
-- Use `|` to match multiple merchants in one rule
-- Use `\\b` for word boundaries when a pattern is too broad
-- Use `^` to anchor at the start of the description
-- Use `\\d` to match digits (e.g. `7-ELEVEN \\d`)
-- Use `\\.` to match a literal dot (e.g. `APPLE\\.COM`)
-- Spaces matter: `"COLES "` (with trailing space) avoids matching "COLESLAW"
-
-### Confidence levels
-
-The categoriser assigns a confidence score:
-
-| Match type | Confidence |
-|-----------|------------|
-| Source-based rule | 1.0 |
-| Exact match | 0.9 |
-| Regex match | 0.8 |
-| Learned (from manual override) | 0.7 |
-| Uncategorized | 0.0 |
+When you change a category in the dashboard, the merchant is labelled and the dashboard offers to move its other unconfirmed rows too. Corrections from the old `category_rules_learned` table are imported once as `human` labels and the table is dropped.
 
 ## Tag rules
 
@@ -183,10 +165,6 @@ Tags are used by the [business split engine](/docs/business-splits) to determine
 | `pattern` | Yes | Regex pattern matched against description |
 | `source_type` | No | Only match transactions from this source |
 
-## Learned rules
-
-When you manually change a transaction's category in the dashboard, the system stores the description-to-category mapping in the `category_rules_learned` database table. Next time a transaction with the same description appears, it will be auto-categorised with confidence 0.7.
-
 ## After editing
 
 Run `ledger init` to reload categories into the database:
@@ -195,4 +173,11 @@ Run `ledger init` to reload categories into the database:
 ledger init
 ```
 
-To re-categorise existing transactions with new rules, re-ingest the archived files or use the dashboard to update individual transactions.
+New `merchants:` entries are labelled the next time the categoriser runs (on ingest or any `ledger categorise` command). To apply them to rows already in the ledger:
+
+```sh
+ledger categorise --rerun --dry-run   # show what would move
+ledger categorise --rerun             # recategorise every row you have not confirmed
+```
+
+See the [CLI reference](/docs/cli#ledger-categorise) for the rest of `ledger categorise`.

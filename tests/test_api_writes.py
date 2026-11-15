@@ -96,3 +96,82 @@ def test_amount_filter_must_be_numeric(client):
     assert client.get("/api/transactions?min=abc").status_code == 400
     assert len(client.get("/api/transactions?min=50").get_json()) == 1
     assert client.get("/api/transactions/summary?direction=in").get_json()["count"] == 0
+
+
+def test_category_change_files_the_merchant_and_lists_its_other_rows(client):
+    conn = db.get_connection()
+    acct = conn.execute("SELECT id FROM accounts").fetchone()[0]
+    for i, desc in enumerate(["SUPERMARKET   0101   EXAMPLETOWN  NS", "OTHER SHOP"]):
+        db.insert_transaction(
+            conn, account_id=acct, date="2026-03-06", description=desc, amount=-20.0,
+            original_amount=None, original_currency=None, fee=0.0, category_id=None,
+            category_confidence=None, reference_id=None, source_type="test", dedup_hash=f"x{i}",
+            source_file="t.csv", raw_data="{}", is_transfer=False)
+    conn.commit()
+    conn.close()
+    r = client.patch("/api/transactions/1", json={"category_name": "Groceries"})
+    assert r.status_code == 200
+    assert r.get_json()["same_merchant"] == [2]           # same merchant, other suburb
+    label = _row("SELECT merchant, origin FROM merchant_labels")
+    assert tuple(label) == ("SUPERMARKET", "human")
+
+
+def test_one_off_category_change_teaches_nothing(client):
+    r = client.patch("/api/transactions/1", json={"category_name": "Groceries", "learn": False})
+    assert r.status_code == 200
+    assert _row("SELECT COUNT(*) FROM merchant_labels")[0] == 0
+
+
+def test_uncategorized_rows_carry_suggestions(client):
+    client.patch("/api/transactions/1", json={"category_name": "Groceries"})
+    conn = db.get_connection()
+    acct = conn.execute("SELECT id FROM accounts").fetchone()[0]
+    db.ensure_category(conn, "Uncategorized")
+    db.insert_transaction(
+        conn, account_id=acct, date="2026-03-07", description="SUPERMARKETS", amount=-30.0,
+        original_amount=None, original_currency=None, fee=0.0,
+        category_id=db.get_category_id(conn, "Uncategorized"), category_confidence=0.0,
+        reference_id=None, source_type="test", dedup_hash="h-sugg", source_file="t.csv",
+        raw_data="{}", is_transfer=False)
+    conn.commit()
+    conn.close()
+    rows = client.get("/api/transactions").get_json()
+    new = next(t for t in rows if t["description"] == "SUPERMARKETS")
+    assert new["suggestions"][0]["category"] == "Groceries"
+    assert next(t for t in rows if t["id"] == 1)["suggestions"] == []
+
+
+def _flag_supermarket(groceries_vs: str = "Shopping"):
+    from etl.merchant_store import MerchantStore
+    conn = db.get_connection()
+    db.ensure_category(conn, groceries_vs)
+    store = MerchantStore(conn)
+    store.learn_key("SUPERMARKET", "out", db.get_category_id(conn, "Groceries"), origin="llm")
+    store.flag("SUPERMARKET", "out", db.get_category_id(conn, groceries_vs), "could be a department store")
+    label_id = conn.execute("SELECT id FROM merchant_labels").fetchone()[0]
+    conn.close()
+    return label_id
+
+
+def test_flagged_merchants_are_listed_with_both_choices(client):
+    _flag_supermarket()
+    [m] = client.get("/api/merchants/review").get_json()
+    assert (m["merchant"], m["category"], m["alternative"]) == ("SUPERMARKET", "Groceries", "Shopping")
+    assert m["rows"] == 1 and m["total"] == -80.0 and m["examples"] == ["SUPERMARKET"]
+    assert m["note"] == "could be a department store"
+
+
+def test_deciding_files_every_row_and_clears_the_flag(client):
+    label_id = _flag_supermarket()
+    r = client.post(f"/api/merchants/{label_id}/decide", json={"category_name": "Shopping"})
+    assert r.get_json() == {"ok": True, "refiled": 1}
+    assert client.get("/api/merchants/review").get_json() == []
+    assert tuple(_row("SELECT c.name, t.category_confidence FROM transactions t "
+                      "JOIN categories c ON c.id = t.category_id WHERE t.id = 1")) == ("Shopping", 1.0)
+    assert _row("SELECT origin FROM merchant_labels WHERE id = ?", label_id)[0] == "human"
+
+
+def test_deciding_refuses_unknown_category_and_label(client):
+    label_id = _flag_supermarket()
+    assert client.post(f"/api/merchants/{label_id}/decide", json={"category_name": "Nope"}).status_code == 400
+    assert client.post("/api/merchants/999/decide", json={"category_name": "Groceries"}).status_code == 404

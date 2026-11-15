@@ -329,6 +329,9 @@ picks them up automatically and holds every one to the contract. Hand-written
 fixtures are useful for edge cases, but they encode the layout you already handle
 -- the archive is what catches the layout you do not.
 
-## Adding category rules
+## Categorising the new bank's rows
 
-After adding a parser, you will likely need to add regex rules in `config/categories.yaml` for the merchant names that appear in that bank's statements. Different banks format merchant names differently, so the same purchase might need multiple patterns.
+Different banks print the same merchant differently. The merchant key strips receipt numbers, dates, card digits, reference codes and trailing suburbs, and the nearest-merchant step usually files the rest from what you have already labelled. Ingest a statement, then check what landed in Uncategorized:
+
+- If the bank wraps descriptions in a fixed prefix (e.g. `Visa Purchase - Receipt ...`), check what `merchant_key()` in `etl/merchant.py` makes of a few real lines. A new kind of noise belongs there, with a doctest, not in the config.
+- Otherwise file the rows in the dashboard, or add the merchants under `merchants:` in `config/categories.yaml` as this bank prints them, then run `ledger categorise --rerun`.

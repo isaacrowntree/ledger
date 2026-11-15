@@ -10,6 +10,9 @@ dependencies = [
     "flask-cors",
     "python-dotenv",
     "pydantic>=2",
+    "numpy",
+    "sqlite-vec>=0.1.6",   # vector index for merchant similarity (MIT/Apache-2.0)
+    "fastembed",           # local ONNX embeddings, bge-small (Apache-2.0; model MIT)
 ]
 
 [tool.setuptools.packages.find]

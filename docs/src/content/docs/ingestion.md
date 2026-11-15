@@ -117,7 +117,7 @@ Both methods feed the same pipeline:
 
 1. **Dedup** — SHA-256 transaction hash.
 2. **Source-of-truth** — credit-card payments from your bank are auto-marked as transfers (see [Source of Truth](/docs/source-of-truth)).
-3. **Categorise** — regex rules from `config/categories.yaml`.
+3. **Categorise** — source rules, then the merchant's own label, then the nearest labelled merchants (see [Categories](/docs/config-categories)).
 4. **Tag** — multi-tag rules.
 
 Then:

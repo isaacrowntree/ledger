@@ -52,7 +52,7 @@ The pipeline for each statement:
 2. Validate it against its own balances, and refuse it if the rows do not add up (see [Adding a Bank](/docs/adding-a-bank#validation))
 3. Compute a dedup hash to skip already-imported transactions
 4. Check source-of-truth rules to auto-mark credit card payments as transfers
-5. Apply category rules (regex matching)
+5. Categorise: source rules, then the merchant's label, then the nearest labelled merchants (see [Categories](/docs/config-categories#how-a-transaction-gets-its-category))
 6. Apply tag rules (multiple tags per transaction)
 7. Insert into SQLite with raw data audit trail
 
@@ -122,6 +122,43 @@ and its payment on the everyday account.
 ledger dedup --dry-run
 ledger dedup
 ```
+
+### `ledger categorise`
+
+Label merchants, recategorise rows, and measure how well the categoriser does. Pick one mode per run.
+
+```sh
+# Label every merchant from the categories already in the ledger (origin "bootstrap")
+ledger categorise --seed
+
+# How many merchants are labelled, by origin
+ledger categorise --stats
+
+# Recategorise every row you have not confirmed (confirmed rows are left alone)
+ledger categorise --rerun --dry-run
+ledger categorise --rerun
+
+# Learn only from rows before a date, then score the guesses for rows from it.
+# Works on an in-memory copy, so nothing is written.
+ledger categorise --evaluate 2025-07-01
+
+# Have Claude file the rows the categoriser could not settle
+ledger categorise --export pending.json
+ledger categorise --import answers.json --dry-run
+ledger categorise --import answers.json
+```
+
+Run `--seed` once after upgrading from the old regex rules, so the merchants already in your ledger are labelled before new statements arrive.
+
+`--evaluate` reports accuracy for source rules, known merchants and nearest-merchant guesses, how often the right category is in the top three suggestions, the trade-off at other similarity thresholds, and the most common misses.
+
+**The export/import round trip.** `--export` writes every pending row (Uncategorized, or a nearest-merchant guess nobody confirmed) as JSON. Each row carries its 10 most similar filed merchants and their categories, and each category carries a few example merchants, so Claude can follow your own conventions. Answer in the form:
+
+```json
+{"1234": {"category": "Eating Out", "confidence": 0.95}}
+```
+
+`--import` files each answer. At confidence 0.9 or above the row is filed and its merchant is learned (origin `llm`). Below that the row is filed at confidence 0.5, so it stays flagged for review and teaches nothing. Rows a person confirmed since the export are skipped, and an unknown category name stops the import before anything is written.
 
 ### `ledger tag`
 

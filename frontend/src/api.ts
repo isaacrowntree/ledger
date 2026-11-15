@@ -49,6 +49,8 @@ export interface Transaction {
   /** Imported recently, dated recently, and the category not yet confirmed by hand. */
   needs_review: number;
   tags: string[];
+  /** For Uncategorized rows: categories of the most similar merchants you have filed, best first. */
+  suggestions: { category: string; score: number }[];
 }
 
 export interface TransactionTotals {
@@ -64,6 +66,31 @@ export interface TransactionUpdate {
   category_name?: string;
   notes?: string;
   reviewed?: boolean;
+  /** false for a one-off: set this row only, without filing its merchant. */
+  learn?: boolean;
+}
+
+export interface MerchantToReview {
+  id: number;
+  merchant: string;
+  direction: "in" | "out";
+  /** The label as it stands (Claude's choice). */
+  category: string;
+  /** The other candidate, e.g. what the old rules filed it under. */
+  alternative: string | null;
+  note: string | null;
+  origin: string;
+  rows: number;
+  total: number;
+  first: string | null;
+  last: string | null;
+  examples: string[];
+}
+
+export interface TransactionUpdateResult {
+  ok: boolean;
+  /** Unconfirmed rows from the same merchant still filed under another category. */
+  same_merchant?: number[];
 }
 
 export interface Category {
@@ -551,8 +578,11 @@ export const api = {
   transactionTotals: (params?: Record<string, string>) =>
     get<TransactionTotals>(`${BASE}/transactions/summary`, params),
 
+  merchantsToReview: () => get<MerchantToReview[]>(`${BASE}/merchants/review`),
+  decideMerchant: (id: number, category_name: string) =>
+    post<{ ok: boolean; refiled: number }>(`/merchants/${id}/decide`, { category_name }),
   updateTransaction: (id: number, data: TransactionUpdate) =>
-    patch<{ ok: boolean }>(`/transactions/${id}`, data),
+    patch<TransactionUpdateResult>(`/transactions/${id}`, data),
 
   categories: () => get<Category[]>(`${BASE}/categories`),
 

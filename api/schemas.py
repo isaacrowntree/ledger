@@ -30,6 +30,8 @@ class TransactionUpdate(Body):
     category_name: Optional[Name] = None
     notes: Optional[Text] = None
     reviewed: Optional[bool] = None
+    # False for a one-off: set this row's category without filing its merchant.
+    learn: bool = True
 
     @model_validator(mode="after")
     def _something(self):
@@ -128,3 +130,7 @@ def body(model: type[M]) -> M:
 def sql_value(v):
     """A parsed value as SQLite should store it (dates as ISO text)."""
     return v.isoformat() if isinstance(v, date) else v
+
+
+class MerchantDecision(Body):
+    category_name: Name
