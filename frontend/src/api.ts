@@ -419,6 +419,11 @@ export interface ATOReturn {
     discount: number;
     net_capital_gain: number;
     losses_carried_forward: number;
+    /** Net capital losses available at the start of the year, and the lodged (or corrected) year they came from. */
+    brought_forward: number;
+    brought_forward_from_fy: number | null;
+    /** Lodged years that carried forward less loss than the ledger finds. */
+    unrecorded_losses: { fy: number; lodged: number; ledger: number; corrected: number | null }[];
     error: string | null;
   };
   manual_entries: { label: string; amount: number; section: string; notes: string }[];

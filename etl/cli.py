@@ -149,7 +149,7 @@ def main():
 
     cgt_parser = sub.add_parser("cgt", help="Capital gains from CommSec contract notes in staging/commsec/")
     cgt_parser.add_argument("--fy", type=int, required=True, help="Financial year (e.g. 2025 for FY 2024-25)")
-    cgt_parser.add_argument("--carried-forward-losses", type=float, default=0.0,
+    cgt_parser.add_argument("--carried-forward-losses", type=float, default=None,
                             help="Net capital losses carried forward from an earlier year (label 18V)")
 
     dedup_parser = sub.add_parser("dedup", help="Find and resolve cross-account duplicate transactions")
@@ -489,28 +489,37 @@ def cmd_reconcile(account: str | None = None, since: str | None = None,
     conn.close()
 
 
-def cmd_cgt(fy: int, carried_forward_losses: float = 0.0):
-    """Report capital gains for a financial year from CommSec contract notes.
+def cmd_cgt(fy: int, carried_forward_losses: float | None = None):
+    """Report capital gains for a financial year.
 
-    Notes are read in place rather than archived like statements: a parcel
-    bought years ago is still needed to cost a disposal today, so the whole
-    history has to stay available.
+    Events come from CommSec contract notes (read in place: a parcel bought
+    years ago is still needed to cost a disposal today) and tax.yaml
+    `cgt_events`. Losses brought forward come from the lodged returns, unless
+    --carried-forward-losses gives them.
     """
-    notes_dir = STAGING_DIR / "commsec"
-    events = events_from_notes(notes_dir)
-    if not events:
-        print(f"No contract notes found in {notes_dir}")
-        return
-
-    summary = summarise(events, fy, carried_forward_losses)
+    from etl.ato_returns import load_ato_returns
+    from etl.cgt import capital_gains_for
+    tax_config = load_tax_config(CONFIG_DIR / "tax.yaml") if (CONFIG_DIR / "tax.yaml").exists() else {}
+    if carried_forward_losses is not None:
+        tax_config = {**tax_config, "capital_losses_carried_forward": {fy - 1: carried_forward_losses}}
+    archive = load_ato_returns(CONFIG_DIR / "ato_returns.yaml")["taxpayers"]
+    summary = capital_gains_for(fy, STAGING_DIR / "commsec", tax_config, archive[0]["lodged"] if archive else [])
 
     print(f"\nCapital gains — FY {fy - 1}-{str(fy)[2:]}\n")
+    if summary["brought_forward"]:
+        src = f"FY{summary['brought_forward_from_fy']}" if summary["brought_forward_from_fy"] else "the ledger"
+        print(f"  Net capital losses brought forward: {summary['brought_forward']:,.2f} (from {src})")
+    for u in summary["unrecorded_losses"]:
+        print(f"  ! FY{u['fy']}: lodged return carried forward {u['lodged']:,.2f} of capital losses, "
+              f"the ledger finds {u['ledger']:,.2f}" + (f" (corrected to {u['corrected']:,.2f})" if u["corrected"] is not None else ""))
     if not summary["events"]:
         print("  No disposals in this financial year.")
-        return
+        if not summary["brought_forward"]:
+            return
 
-    print(f"  {'code':<6}{'units':>9}  {'acquired':<11}{'disposed':<11}"
-          f"{'cost base':>12}{'proceeds':>12}{'gain':>12}  discount")
+    if summary["events"]:
+        print(f"  {'code':<6}{'units':>9}  {'acquired':<11}{'disposed':<11}"
+              f"{'cost base':>12}{'proceeds':>12}{'gain':>12}  discount")
     for e in summary["events"]:
         print(f"  {e.code:<6}{e.units:>9,.0f}  {e.acquired}  {e.disposed}"
               f"{e.cost_base:>12,.2f}{e.proceeds:>12,.2f}{e.gain:>12,.2f}"

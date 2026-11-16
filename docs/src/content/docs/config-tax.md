@@ -161,6 +161,32 @@ manual_entries:
       notes: "From payment summary"
 ```
 
+## Capital gains
+
+CommSec contract notes in `staging/commsec/` are matched first in, first out.
+Other assets go in `cgt_events`:
+
+```yaml
+cgt_events:
+  - asset: "Gold bullion"
+    acquired: 2020-08-03
+    disposed: 2021-03-10
+    cost_base: 10000.00     # price plus costs of buying
+    proceeds: 9000.00       # price less costs of selling
+```
+
+Net capital losses carried forward (18V) come from your lodged returns
+(`config/ato_returns.yaml`). If a lodged figure was wrong, correct it here,
+keyed by the year it was carried out of; the correction wins:
+
+```yaml
+capital_losses_carried_forward:
+  2025: 9000
+```
+
+The return's item 18 shows the losses brought forward, and flags any lodged
+year that carried forward less loss than the ledger can account for.
+
 ## Running the tax summary
 
 From the CLI:

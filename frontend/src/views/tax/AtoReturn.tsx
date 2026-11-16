@@ -193,12 +193,22 @@ function CapitalGains({ cg }: { cg: ATOReturn["capital_gains"] }) {
       </Section>
     );
   }
-  if (!cg.events.length) return null;
+  if (!cg.events.length && !cg.brought_forward && !cg.unrecorded_losses.length) return null;
   return (
     <Section title="Item 18 · Capital gains">
       <p className="hint" style={{ marginTop: 0 }}>
-        Parcels matched first in, first out from CommSec contract notes. The 50% discount applies to a parcel held more than 12 months.
+        Shares are matched first in, first out from CommSec contract notes; other assets come from <code>cgt_events</code> in
+        tax.yaml. The 50% discount applies to a parcel held more than 12 months.
       </p>
+      {cg.unrecorded_losses.map((u) => (
+        <p className="attention" role="note" key={u.fy}>
+          FY{u.fy - 1}–{String(u.fy).slice(2)}: the lodged return carried forward <Money value={u.lodged} tone="plain" /> of
+          capital losses, but the ledger finds <Money value={u.ledger} tone="plain" />.
+          {u.corrected !== null
+            ? <> Corrected to <Money value={u.corrected} tone="plain" /> in tax.yaml.</>
+            : <> A loss may be missing from that return: ask your accountant.</>}
+        </p>
+      ))}
       <div className="table-wrap">
         <table className="ledger">
           <thead><tr><th>Code</th><th className="num">Units</th><th>Acquired</th><th>Disposed</th><th className="num">Cost base</th>
@@ -209,8 +219,12 @@ function CapitalGains({ cg }: { cg: ATOReturn["capital_gains"] }) {
                 <td className="num"><Money value={e.cost_base} tone="plain" /></td><td className="num"><Money value={e.proceeds} tone="plain" /></td>
                 <td className="num"><Money value={e.gain} /></td><td>{e.discountable ? "50%" : "none"}</td></tr>
             ))}
+            {cg.brought_forward > 0 && (
+              <tr><td colSpan={6}>Net capital losses brought forward{cg.brought_forward_from_fy ? ` (from FY${cg.brought_forward_from_fy - 1}–${String(cg.brought_forward_from_fy).slice(2)})` : ""}</td>
+                <td className="num"><Money value={cg.brought_forward} tone="plain" /></td><td /></tr>
+            )}
             <tr><td colSpan={6}>Gross capital gains</td><td className="num"><Money value={cg.gross_gains} /></td><td /></tr>
-            {cg.losses > 0 && <tr><td colSpan={6}>Capital losses applied</td><td className="num"><Money value={-cg.losses_applied} /></td><td /></tr>}
+            {cg.losses_applied > 0 && <tr><td colSpan={6}>Capital losses applied</td><td className="num"><Money value={-cg.losses_applied} /></td><td /></tr>}
             <tr><td colSpan={6}>Less 50% discount</td><td className="num"><Money value={-cg.discount} /></td><td /></tr>
             <tr className="total"><td colSpan={6}>Net capital gain</td><td className="num"><Money value={cg.net_capital_gain} /></td><td /></tr>
             {cg.losses_carried_forward > 0 && (
