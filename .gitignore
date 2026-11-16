@@ -53,3 +53,7 @@ docs/dist/
 
 # Local tax review notes (may reference financial specifics)
 notes/
+
+# Personal: which mail accounts `ledger receipts` reads, and the conventions sent with `--llm`
+config/receipts.yaml
+config/categorising-guide.md

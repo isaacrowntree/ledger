@@ -10,7 +10,17 @@ dependencies = [
     "flask-cors",
     "python-dotenv",
     "pydantic>=2",
+    "numpy",
 ]
+
+[project.optional-dependencies]
+# Better categorisation: local embeddings (bge-small via ONNX, Apache-2.0; model
+# MIT) and the sqlite-vec index (MIT/Apache-2.0). Without them the categoriser
+# falls back to character n-grams and a NumPy index, and still works.
+vectors = ["fastembed", "sqlite-vec>=0.1.6"]
+# `ledger categorise --llm`: Claude files what the categoriser couldn't (MIT).
+llm = ["anthropic>=2.8"]
+dev = ["pytest"]
 
 [tool.setuptools.packages.find]
 include = ["etl*", "api*"]

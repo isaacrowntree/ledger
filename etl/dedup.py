@@ -195,7 +195,10 @@ def resolve_duplicates(
                   f"KEEP: {keep_desc}  |  MARK TRANSFER: {mark_desc} ({mark_acct})")
         else:
             conn.execute(
-                "UPDATE transactions SET is_transfer = 1, category_id = ? WHERE id = ?",
+                # Confidence 1.0: settled by rule, so recategorising (`ledger
+                # categorise --rerun`, Claude's imports) never undoes it.
+                "UPDATE transactions SET is_transfer = 1, category_id = ?, category_confidence = 1.0 "
+                "WHERE id = ?",
                 (transfers_cat_id, mark_id),
             )
             # A shared-expense row attached to the transfer side would double-count

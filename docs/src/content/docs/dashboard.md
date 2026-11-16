@@ -30,9 +30,16 @@ A searchable, filterable table of all transactions with:
 - Date, description, amount, category, account, tags
 - **Search** by description text
 - **Filter** by date range, category, and account
-- **Edit** category inline -- the system learns from your manual overrides for future auto-categorisation
+- **Edit** category inline -- this labels the merchant, so its later transactions are filed the same way, and offers to move its other unconfirmed rows too
+- **Suggestions** on Uncategorized rows -- one-click chips with the categories of the most similar merchants you have filed
 - **Edit** notes on individual transactions
 - Transfer transactions can be shown or hidden
+
+## Merchants to check
+
+Under Money. Lists merchants flagged for a person's decision, for example where Claude filed a merchant one way and the old rules filed it another, or where Claude was unsure. Each card shows the merchant, how many rows and how much money it covers, a few example descriptions, and the candidate categories.
+
+Choosing a category labels the merchant as yours (origin `human`) and refiles every unconfirmed row from it at confidence 1.0. The biggest amounts are listed first.
 
 ## Spreadsheet tab
 

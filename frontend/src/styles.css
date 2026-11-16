@@ -590,7 +590,13 @@ button.quiet, a { color: var(--area-ink); }
 
 /* Category marks: a dot beside a name, and bars/meters in the category colour. */
 .cat-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 7px; flex: none; vertical-align: 0; }
-.cat-cell { display: flex; align-items: center; }
+.cat-cell { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
+.suggest { display: flex; gap: 4px; flex-wrap: wrap; }
+button.suggest-chip {
+  border-radius: 999px; min-height: 24px; padding: 1px 9px; font-size: 12px;
+  background: transparent; border: 1px dashed var(--rule-strong); color: var(--link);
+}
+button.suggest-chip:hover, button.suggest-chip:focus-visible { border-style: solid; background: var(--wash); }
 .meter-fill.cat { background: var(--cat, var(--ink-2)); }
 .meter.over .meter-fill.cat { background: var(--owe); }
 
@@ -746,3 +752,13 @@ table.matrix td.heat { background: color-mix(in srgb, var(--series-spending) var
 table.matrix td.heat a { color: var(--ink); text-decoration: none; }
 table.matrix td.heat a:hover { text-decoration: underline; }
 table.matrix td:first-child { white-space: nowrap; }
+
+/* Merchants to check */
+.merchant-review { list-style: none; padding: 0; margin: 0; display: grid; gap: 12px; }
+.merchant-card { background: var(--surface); border: 1px solid var(--rule); border-radius: var(--radius-panel); padding: 12px 14px; }
+.merchant-head { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; justify-content: space-between; }
+.merchant-examples { list-style: none; padding: 0; margin: 8px 0; display: grid; gap: 2px; }
+.merchant-examples code { font-size: 12px; overflow-wrap: anywhere; }
+.merchant-note { margin: 0 0 8px; font-size: 13px; }
+.merchant-choices { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.merchant-choices button .muted { font-size: 11px; margin-left: 4px; }

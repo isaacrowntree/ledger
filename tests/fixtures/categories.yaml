@@ -38,61 +38,37 @@ categories:
   - name: Fees & Charges
   - name: Cash Withdrawal
   - name: Investments
+  - name: "Personal (non-assessable)"
+    is_income: true
+  - name: Home & Garden
   - name: Uncategorized
 
 rules:
+  # Every row from this source belongs to one category.
   - type: source
     source_type: airbnb
     category: Airbnb Income
 
-  - type: regex
-    pattern: "NAMECHEAP|ICDSOFT|DIGITAL ?OCEAN|CLOUDFLARE"
-    category: "Business: Hosting & Infrastructure"
-  - type: regex
-    pattern: "TWILIO|GOOGLE.?GSUITE|GITHUB|FIGMA|ADOBE"
-    category: "Business: Software & Subscriptions"
-  - type: regex
-    pattern: "SALARY DEPOSIT"
-    category: Salary
-  - type: regex
-    pattern: "INTEREST CREDIT|CREDIT BONUS INTEREST"
-    category: Interest Income
-  - type: regex
-    pattern: "AIRBNB PAYMENTS|PAYONEER"
-    category: Airbnb Income
-  - type: regex
-    pattern: "TRANSFER TO|TRANSFER FROM|BPAY|INTERNAL TRANSFER"
-    category: Transfers
-  - type: regex
-    pattern: "SAVINGS MAXIMISER"
-    category: Transfers
-  - type: regex
-    pattern: "INTEREST CHARGED"
-    category: Fees & Charges
-  - type: regex
-    pattern: "MORTGAGE OFFSET|INTEREST CHARGE"
-    category: Mortgage
-  - type: regex
-    pattern: "WOOLWORTHS|COLES |ALDI"
-    category: Groceries
-  - type: regex
-    pattern: "UBER ?EATS|DOORDASH|MENULOG"
-    category: Eating Out
-  - type: regex
-    pattern: "MCDONALDS|KFC|SUBWAY"
-    category: Eating Out
-  - type: regex
-    pattern: "NETFLIX|SPOTIFY|YOUTUBE"
-    category: Subscriptions
-  - type: regex
-    pattern: "OPAL|UBER TRIP|TAXI"
-    category: Public Transport
-  - type: regex
-    pattern: "^UBER AUSTRALIA|^UBER BV"
-    category: Public Transport
-  - type: regex
-    pattern: "GENERAL CARD DEPOSIT|BANK DEPOSIT TO PAYPAL"
-    category: Transfers
+# Merchants filed before any transaction is categorised. Written as they appear
+# on a statement; receipt numbers, dates, card digits and suburbs are ignored.
+merchants:
+  Namecheap, Inc: "Business: Hosting & Infrastructure"
+  ICDSoft (Hong Kong) Limited: "Business: Hosting & Infrastructure"
+  Twilio: "Business: Software & Subscriptions"
+  Google GSUITE_example.com: "Business: Software & Subscriptions"
+  Salary Deposit Employer Pty Ltd: Salary
+  Interest Credit: Interest Income
+  Internal Transfer Transfer To: Transfers
+  BPAY Bill Payment: Transfers
+  General card deposit: Transfers
+  Bank deposit to PayPal account: Transfers
+  WOOLWORTHS: Groceries
+  COLES: Groceries
+  NETFLIX.COM: Subscriptions
+  SPOTIFY: Subscriptions
+  Uber Australia Pty Ltd: Public Transport
+  UBER EATS: Eating Out
+  MCDONALDS: Eating Out
 
 tag_rules:
   - tag: flight

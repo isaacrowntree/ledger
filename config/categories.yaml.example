@@ -76,157 +76,173 @@ categories:
   - name: Uncategorized
 
 # =============================================================================
-# CATEGORY RULES — matched top-to-bottom, first match wins.
-# Types: "source" (match source_type), "regex" (match description)
+# SOURCE RULES — every row from a source belongs to one category.
+# These run before anything else. Merchants are filed under `merchants:` below.
 # =============================================================================
 rules:
-  # --- Source-based ---
   - type: source
     source_type: airbnb
     category: Airbnb Income
 
-  # --- Business (matched first, before personal) ---
-  - type: regex
-    pattern: "NAMECHEAP|ICDSOFT|DIGITAL ?OCEAN|HEROKU|CLOUDFLARE|AWS |AMAZON WEB SERVICES"
-    category: "Business: Hosting & Infrastructure"
-  - type: regex
-    pattern: "TWILIO|GOOGLE.?GSUITE|GITHUB|GITLAB|JETBRAINS|FIGMA|CANVA|ADOBE|OPENAI|ANTHROPIC"
-    category: "Business: Software & Subscriptions"
+# =============================================================================
+# MERCHANTS — "description as it appears on a statement": Category
+#
+# These seed the categoriser before it has seen your own filing. Receipt
+# numbers, dates, card digits, reference codes and trailing suburbs/states are
+# ignored, so "WOOLWORTHS 1234 SYDNEY NS" and "WOOLWORTHS" are the same merchant.
+# A merchant you have never listed is filed like the most similar ones you
+# have, so a few examples per category go a long way. Changing a category in
+# the dashboard always wins over this list.
+# =============================================================================
+merchants:
+  # --- Business ---
+  NAMECHEAP.COM: "Business: Hosting & Infrastructure"
+  ICDSOFT: "Business: Hosting & Infrastructure"
+  DIGITALOCEAN.COM: "Business: Hosting & Infrastructure"
+  HEROKU: "Business: Hosting & Infrastructure"
+  CLOUDFLARE: "Business: Hosting & Infrastructure"
+  AMAZON WEB SERVICES: "Business: Hosting & Infrastructure"
+  TWILIO: "Business: Software & Subscriptions"
+  GOOGLE GSUITE: "Business: Software & Subscriptions"
+  GITHUB.COM: "Business: Software & Subscriptions"
+  GITLAB: "Business: Software & Subscriptions"
+  JETBRAINS: "Business: Software & Subscriptions"
+  FIGMA: "Business: Software & Subscriptions"
+  CANVA: "Business: Software & Subscriptions"
+  ADOBE: "Business: Software & Subscriptions"
+  OPENAI: "Business: Software & Subscriptions"
+  ANTHROPIC: "Business: Software & Subscriptions"
 
-  # --- Tax (ATO) — before Transfers, so ATO BPAY payments aren't caught as transfers ---
-  - type: regex
-    pattern: "ATO PAYMENT|AUSTRALIAN TAXATION|TAXATION OFFICE|\\bATO ATO\\d"
-    category: Tax
+  # --- Tax ---
+  ATO PAYMENT: Tax
+  AUSTRALIAN TAXATION OFFICE: Tax
 
   # --- Income ---
-  - type: regex
-    pattern: "SALARY DEPOSIT"
-    category: Salary
-  - type: regex
-    pattern: "INTEREST CREDIT|CREDIT BONUS INTEREST"
-    category: Interest Income
-  - type: regex
-    pattern: "AIRBNB PAYMENTS"
-    category: Airbnb Income
+  SALARY DEPOSIT EMPLOYER PTY LTD: Salary
+  INTEREST CREDIT: Interest Income
+  CREDIT BONUS INTEREST: Interest Income
+  AIRBNB PAYMENTS: Airbnb Income
 
   # --- Transfers ---
-  - type: regex
-    pattern: "TRANSFER TO|TRANSFER FROM|BPAY|INTERNAL TRANSFER"
-    category: Transfers
+  TRANSFER TO OTHER ACCOUNT: Transfers
+  TRANSFER FROM OTHER ACCOUNT: Transfers
+  INTERNAL TRANSFER: Transfers
+  BPAY BILL PAYMENT: Transfers
 
-  # --- Credit card interest (must be BEFORE mortgage) ---
-  - type: regex
-    pattern: "INTEREST CHARGED"
-    category: Fees & Charges
-
-  # --- Mortgage ---
-  - type: regex
-    pattern: "MORTGAGE OFFSET|TRANSFER OFFSET FACILITY|INTEREST CHARGE"
-    category: Mortgage
+  # --- Fees and mortgage ---
+  INTEREST CHARGED: Fees & Charges
+  ANNUAL FEE: Fees & Charges
+  BANK CHEQUE FEE: Fees & Charges
+  OVERDRAFT FEE: Fees & Charges
+  MORTGAGE OFFSET: Mortgage
+  TRANSFER OFFSET FACILITY: Mortgage
+  INTEREST CHARGE HOME LOAN: Mortgage
 
   # --- Groceries ---
-  - type: regex
-    pattern: "WOOLWORTHS|COLES |ALDI |IGA |HARRIS FARM|COSTCO"
-    category: Groceries
-  - type: regex
-    pattern: "LIQUORLAND|DAN MURPHY|BWS"
-    category: Groceries
+  WOOLWORTHS: Groceries
+  COLES: Groceries
+  ALDI STORES: Groceries
+  IGA: Groceries
+  HARRIS FARM MARKETS: Groceries
+  COSTCO WHOLESALE: Groceries
+  LIQUORLAND: Groceries
+  DAN MURPHYS: Groceries
+  BWS: Groceries
 
   # --- Eating Out ---
-  - type: regex
-    pattern: "UBER ?EATS|DOORDASH|MENULOG|DELIVEROO"
-    category: Eating Out
-  - type: regex
-    pattern: "MCDONALDS|KFC|HUNGRY JACK|SUBWAY |GUZMAN|GYG |DOMINOS|NANDOS|OPORTO|ZAMBRERO"
-    category: Eating Out
-  - type: regex
-    pattern: "CAFE|COFFEE|BAKERY|RESTAURANT|BISTRO|PIZZA|BURGER|SUSHI"
-    category: Eating Out
+  UBER EATS: Eating Out
+  DOORDASH: Eating Out
+  MENULOG: Eating Out
+  DELIVEROO: Eating Out
+  MCDONALDS: Eating Out
+  KFC: Eating Out
+  HUNGRY JACKS: Eating Out
+  SUBWAY: Eating Out
+  GUZMAN Y GOMEZ: Eating Out
+  DOMINOS PIZZA: Eating Out
+  NANDOS: Eating Out
+  OPORTO: Eating Out
+  ZAMBRERO: Eating Out
 
   # --- Transport ---
-  - type: regex
-    pattern: "OPAL|TRANSPORTFORNSW|UBER TRIP|TAXI"
-    category: Public Transport
-  - type: regex
-    pattern: "^UBER AUSTRALIA|^UBER BV|DIDIMOBILITY"
-    category: Public Transport
-  - type: regex
-    pattern: "JETSTAR|QANTAS|VIRGIN AUSTRALIA"
-    category: Public Transport
-  - type: regex
-    pattern: "BOOKING\\.COM|AIRBNB \\*"
-    category: Public Transport
+  TRANSPORTFORNSW OPAL: Public Transport
+  UBER TRIP: Public Transport
+  UBER AUSTRALIA PTY LTD: Public Transport
+  DIDIMOBILITY: Public Transport
+  CABCHARGE TAXI: Public Transport
+  JETSTAR: Public Transport
+  QANTAS AIRWAYS: Public Transport
+  VIRGIN AUSTRALIA: Public Transport
+  BOOKING.COM: Public Transport
 
   # --- Fuel ---
-  - type: regex
-    pattern: "BP |AMPOL|CALTEX|SHELL |7-ELEVEN \\d|EG FUELCO|BUDGET PETROL|UNITED PETROL"
-    category: Fuel
+  BP EXPRESS: Fuel
+  AMPOL: Fuel
+  CALTEX: Fuel
+  SHELL COLES EXPRESS: Fuel
+  EG FUELCO: Fuel
+  UNITED PETROLEUM: Fuel
 
-  # --- Car ---
-  - type: regex
-    pattern: "CAR WASH|PARKING|EUROPCAR"
-    category: Car
-  - type: regex
-    pattern: "LINKT|NRMA"
-    category: Car
-
-  # --- Tolls ---
-  - type: regex
-    pattern: "DIRECT DEBIT.*LINKT"
-    category: Tolls
+  # --- Car and tolls ---
+  WILSON PARKING: Car
+  SECURE PARKING: Car
+  EUROPCAR: Car
+  NRMA: Car
+  LINKT: Tolls
 
   # --- Subscriptions ---
-  - type: regex
-    pattern: "NETFLIX|SPOTIFY|YOUTUBE|DISNEY|STAN |APPLE\\.COM"
-    category: Subscriptions
+  NETFLIX.COM: Subscriptions
+  SPOTIFY: Subscriptions
+  YOUTUBE PREMIUM: Subscriptions
+  DISNEY PLUS: Subscriptions
+  STAN.COM.AU: Subscriptions
+  APPLE.COM/BILL: Subscriptions
 
   # --- Insurance ---
-  - type: regex
-    pattern: "INSURANCE|MEDIBANK|AMBULANCE"
-    category: Insurance
+  MEDIBANK PRIVATE: Insurance
+  AMBULANCE NSW: Insurance
+  ACME CAR INSURANCE: Insurance
 
   # --- Utilities ---
-  - type: regex
-    pattern: "OPTUS|VODAFONE|TPG|ALINTA ENERGY|SYDNEY WATER"
-    category: Utilities
+  OPTUS: Utilities
+  VODAFONE: Utilities
+  TPG INTERNET: Utilities
+  ALINTA ENERGY: Utilities
+  SYDNEY WATER: Utilities
 
   # --- Rent ---
-  - type: regex
-    pattern: "IPAYRENT"
-    category: Rent
+  IPAYRENT: Rent
 
   # --- Health ---
-  - type: regex
-    pattern: "CHEMIST|PHARMACY|PHYSIO|DENTAL|DOCTOR|MEDICAL|CLINIC"
-    category: Health
-  - type: regex
-    pattern: "GYM|FITNESS"
-    category: Fitness
+  CHEMIST WAREHOUSE: Health
+  PRICELINE PHARMACY: Health
+  CITY PHYSIO CLINIC: Health
+  SMILE DENTAL: Health
+  MEDICAL CENTRE: Health
+  ANYTIME FITNESS: Fitness
+  LOCAL GYM: Fitness
 
   # --- Shopping ---
-  - type: regex
-    pattern: "BUNNINGS|IKEA|JB HI|REBEL|KMART|OFFICEWORKS"
-    category: Shopping
-  - type: regex
-    pattern: "AMAZON|EBAY"
-    category: Shopping
+  BUNNINGS WAREHOUSE: Shopping
+  IKEA: Shopping
+  JB HI FI: Shopping
+  REBEL SPORT: Shopping
+  KMART: Shopping
+  OFFICEWORKS: Shopping
+  AMAZON AU MARKETPLACE: Shopping
+  EBAY: Shopping
 
   # --- Entertainment ---
-  - type: regex
-    pattern: "CINEMA|MOVIE|THEATRE|MUSEUM|ZOO"
-    category: Entertainment
+  HOYTS CINEMA: Entertainment
+  EVENT CINEMAS: Entertainment
+  STATE THEATRE: Entertainment
+  TARONGA ZOO: Entertainment
 
   # --- Cash ---
-  - type: regex
-    pattern: "ATM WITHDRAWAL|CASH WITHDRAWAL"
-    category: Cash Withdrawal
+  ATM WITHDRAWAL: Cash Withdrawal
+  CASH WITHDRAWAL: Cash Withdrawal
 
-  # --- Fees ---
-  - type: regex
-    pattern: "ANNUAL FEE|BANK CHEQUE|OVERDRAFT"
-    category: Fees & Charges
-
-  # Add your own rules below — more specific patterns should go above generic ones.
+  # Add your own merchants below, copied from a statement line.
 
 # =============================================================================
 # TAG RULES — Multiple tags can match per transaction. Orthogonal to categories.

@@ -59,10 +59,40 @@ CREATE TABLE IF NOT EXISTS currency_rates (
     UNIQUE(date, from_currency, to_currency)
 );
 
-CREATE TABLE IF NOT EXISTS category_rules_learned (
-    description_pattern TEXT PRIMARY KEY,
-    category_id INTEGER REFERENCES categories(id),
-    times_seen INTEGER DEFAULT 1
+-- One row per merchant (see etl/merchant.py): the category it is filed under.
+-- The vector index over these rows is created by etl/vector_index.py (sqlite-vec
+-- tables, or a plain BLOB table for the NumPy fallback), because its width
+-- depends on the embedder.
+CREATE TABLE IF NOT EXISTS merchant_labels (
+    id INTEGER PRIMARY KEY,
+    merchant TEXT NOT NULL,
+    direction TEXT NOT NULL CHECK (direction IN ('in', 'out')),
+    category_id INTEGER NOT NULL REFERENCES categories(id),
+    origin TEXT NOT NULL CHECK (origin IN ('human', 'seed', 'llm', 'bootstrap')),
+    times_seen INTEGER NOT NULL DEFAULT 1,
+    example TEXT,           -- one description as the bank printed it, for context
+    -- Set when someone should choose between this category and alt_category_id
+    -- (e.g. Claude and the old rules disagreed). Cleared by a person's decision.
+    needs_review INTEGER NOT NULL DEFAULT 0,
+    alt_category_id INTEGER REFERENCES categories(id),
+    note TEXT,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (merchant, direction)
+);
+
+-- A deposit from a person that pays back (part of) one of the owner's purchases.
+-- The deposit is filed under the purchase's category, so that category is net.
+CREATE TABLE IF NOT EXISTS reimbursements (
+    deposit_id INTEGER PRIMARY KEY REFERENCES transactions(id),
+    purchase_id INTEGER NOT NULL REFERENCES transactions(id),
+    amount REAL NOT NULL,
+    matched_by TEXT NOT NULL CHECK (matched_by IN ('auto', 'claude', 'human')),
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS merchant_index_meta (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS transaction_tags (
@@ -174,6 +204,10 @@ MIGRATIONS = [
     # mortgage). Net worth shows both the household figure and your share.
     ("accounts", "ownership_pct", "REAL NOT NULL DEFAULT 100"),
     ("holdings", "ownership_pct", "REAL NOT NULL DEFAULT 100"),
+    # A merchant that sells both business and personal things (Amazon), or a
+    # person whose payments mean different things (house money vs bills). Its
+    # rows always file for review so each is looked at; see MerchantStore.
+    ("merchant_labels", "mixed", "INTEGER NOT NULL DEFAULT 0"),
 ]
 
 

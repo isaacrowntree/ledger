@@ -9,7 +9,7 @@ A personal finance tool that ingests bank statements from multiple Australian ba
 ## What it does
 
 - **Multi-source ingestion** — parse statements from ING, CBA, Bankwest, HSBC, PayPal, Coles Mastercard, Amex and Airbnb (PDF + CSV)
-- **Auto-categorisation** — regex-based rules assign categories to transactions; learns from manual overrides
+- **Auto-categorisation** — each merchant is filed once and every later visit follows; new merchants borrow the category of the most similar ones you have filed (local embeddings in a sqlite-vec index, no cloud). Uncategorized rows get one-click suggestions, and Claude can file a backlog through `ledger categorise --export`/`--import`; a "Merchants to check" page settles the ones that need a person
 - **Source-of-truth dedup** — prevents double-counting when transactions appear on both a bank account and a credit card
 - **Business splits** — automatically allocate percentages of expenses to businesses for tax reporting
 - **ATO tax return view** — structured output matching Australian individual tax return sections (salary, rental, business schedule, deductions)
@@ -31,7 +31,8 @@ A personal finance tool that ingests bank statements from multiple Australian ba
 git clone https://github.com/isaacrowntree/ledger.git
 cd ledger
 python3 -m venv .venv && source .venv/bin/activate
-pip install -e .
+pip install -e ".[vectors]"        # or plain -e . : n-gram + NumPy fallback
+# optional: pip install -e ".[llm]" for `ledger categorise --llm`
 
 # Copy and customise config
 cp config/accounts.yaml.example config/accounts.yaml
@@ -124,17 +125,21 @@ accounts:
 
 ### `categories.yaml`
 
-Categories, regex matching rules, and tag rules:
+Categories, source rules, seed merchants, and tag rules:
 
 ```yaml
 categories:
   - name: Groceries
     budget_monthly: 600
 
-rules:
-  - type: regex
-    pattern: "WOOLWORTHS|COLES |ALDI"
-    category: Groceries
+rules:                       # only `type: source` rules
+  - type: source
+    source_type: airbnb
+    category: Airbnb Income
+
+merchants:                   # "description as on a statement": Category
+  WOOLWORTHS: Groceries
+  UBER EATS: Eating Out
 
 tag_rules:
   - tag: flight
@@ -176,6 +181,16 @@ ledger reconcile --since 2026-01-01 --account Bankwest
 ledger ingest --force            # Ingest even if a statement fails validation
 ledger dedup                     # Find and resolve cross-account duplicates
 ledger tag --pattern "UBER" --tag transport   # Bulk tag/recategorise by description
+ledger categorise --setup        # First run: label merchants from existing categories, show next steps
+ledger categorise --seed         # Label every merchant from the categories already in the ledger
+ledger categorise --rerun --dry-run   # Recategorise unconfirmed rows (drop --dry-run to write)
+ledger categorise --evaluate 2025-07-01   # Score the categoriser on rows from a date
+ledger categorise --stats        # Labelled merchants by origin
+ledger categorise --export pending.json   # Pending rows + similar merchants, for Claude
+ledger categorise --import answers.json   # File Claude's answers
+ledger categorise --llm --dry-run   # File pending rows with the Claude API (needs the llm extra)
+ledger receipts                 # Match purchases to email receipts (himalaya) and keep the items
+ledger reimbursements           # Link repayments from people to what they repaid
 ```
 
 ### Ingest-time validation
@@ -244,7 +259,9 @@ The Flask API serves data to the dashboard at `http://127.0.0.1:5050`.
 | `GET /api/ato/lodged` | Previously lodged returns from `ato_returns.yaml` |
 | `GET /api/holdings` | Investment holdings and their events |
 | `GET /api/work-trips` | Work trips backing the travel deduction |
-| `PATCH /api/transactions/<id>` | Update category or notes |
+| `PATCH /api/transactions/<id>` | Update category, notes or reviewed; labels the merchant unless `learn: false` |
+| `GET /api/merchants/review` | Merchants flagged for a person's decision |
+| `POST /api/merchants/<id>/decide` | File a flagged merchant and refile its unconfirmed rows |
 | `PATCH /api/transactions/<id>/split` | Override business split % |
 
 ## Architecture
@@ -252,7 +269,7 @@ The Flask API serves data to the dashboard at `http://127.0.0.1:5050`.
 ```
 config/              # Your personal config (gitignored)
   accounts.yaml      # Bank accounts and source-of-truth rules
-  categories.yaml    # Categories, regex rules, tag rules
+  categories.yaml    # Categories, source rules, seed merchants, tag rules
   tax.yaml           # ATO tax config (businesses, rental, deductions)
   schedules.yaml     # Recurring schedules (repayments, subscriptions)
   depreciation.yaml  # Business asset register (decline in value)
@@ -262,7 +279,15 @@ etl/                 # Extract-Transform-Load pipeline
   parsers/           # One parser per bank format (PDF/CSV)
   contract.py        # What a parser must hand back (ParsedStatement)
   engine.py          # Identity, idempotency and validation of statements
-  categorizer.py     # Regex-based category matching
+  categorizer.py     # Source rule → merchant label → nearest merchants
+  merchant.py        # Normalised merchant key (strips receipt numbers, dates, suburbs)
+  merchant_store.py  # Merchant labels and the sqlite-vec similarity index
+  embedding.py       # Local embeddings (bge-small, or bge-base, via fastembed; n-gram fallback)
+  categorise_cmd.py  # `ledger categorise`: setup, seed, rerun, evaluate, export/import
+  llm_file.py        # `ledger categorise --llm`: Claude files pending rows by bucket
+  vector_index.py    # sqlite-vec index, or NumPy brute force when it can't load
+  receipts.py        # `ledger receipts`: email receipts via himalaya
+  mailtext.py        # Plain text from HTML emails
   tagger.py          # Multi-tag assignment
   splitter.py        # Business expense split engine
   normalizer.py      # Dedup, source-of-truth, insert pipeline
@@ -309,7 +334,7 @@ python -m api
 1. **Ingest**: Drop bank statement PDFs/CSVs into `staging/<source>/`. Run `ledger ingest`.
 2. **Parse**: Source-specific parsers extract date, description, amount, and balance from each format.
 3. **Normalise**: Dedup hashing prevents re-importing. Source-of-truth system marks ING payments to credit cards as transfers.
-4. **Categorise**: Regex rules assign a category. Manual overrides in the UI train the learning system.
+4. **Categorise**: Source rules first, then the merchant's own label, then the nearest labelled merchants when they agree. Changing a category in the UI labels the merchant for next time.
 5. **Tag**: Multiple tags assigned per transaction for sub-classification.
 6. **Split**: Business split engine allocates percentages based on category + tag rules.
 7. **View**: Dashboard shows spending, income, budgets, trends, and ATO-ready tax reports.

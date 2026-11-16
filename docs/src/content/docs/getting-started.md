@@ -22,18 +22,18 @@ The `file_prefix` maps statement filenames to accounts. A file named `my_checkin
 
 See the [accounts config guide](/docs/config-accounts) for credit cards, source-of-truth setup, and more.
 
-## 2. Configure categories and rules
+## 2. Configure categories and merchants
 
-Edit `config/categories.yaml`. The example file has sensible defaults for Australian expenses (groceries, transport, utilities, etc.). Add regex rules for merchants you use frequently:
+Edit `config/categories.yaml`. The example file has sensible defaults for Australian expenses (groceries, transport, utilities, etc.). List a few merchants you use, written as they appear on a statement:
 
 ```yaml
-rules:
-  - type: regex
-    pattern: "WOOLWORTHS|COLES |ALDI"
-    category: Groceries
+merchants:
+  WOOLWORTHS: Groceries
+  COLES: Groceries
+  UBER EATS: Eating Out
 ```
 
-Rules are matched top-to-bottom and first match wins. Put more specific patterns above generic ones.
+Receipt numbers, dates, card digits and suburbs are ignored. A merchant you have not listed is filed like the most similar ones you have, and you teach it the rest from the dashboard. See the [categories guide](/docs/config-categories).
 
 ## 3. Configure tax (optional)
 
@@ -83,7 +83,7 @@ The ETL pipeline for each transaction:
 1. **Parse** -- extract date, description, amount from the source format
 2. **Dedup** -- SHA-256 hash prevents re-importing the same transaction
 3. **Source-of-truth** -- payments to credit cards from your bank account are auto-marked as transfers
-4. **Categorise** -- regex rules assign a category (or "Uncategorized")
+4. **Categorise** -- source rules, then the merchant's label, then the nearest labelled merchants (or "Uncategorized")
 5. **Tag** -- multiple tags applied for sub-classification
 6. **Insert** -- written to SQLite with full audit trail
 
@@ -100,15 +100,41 @@ Open [http://localhost:5050](http://localhost:5050) in your browser. You will se
 - **Spreadsheet** -- financial year view with outgoing/incoming/rental tabs
 - **Tax** -- ATO return view with structured sections
 
-## 8. Fix uncategorized transactions
+## 8. Categorising: start here
 
-In the Transactions view, filter by category "Uncategorized". Click a transaction to change its category. The system learns from manual overrides -- next time the same merchant description appears, it will auto-categorise.
-
-You can also add regex rules to `config/categories.yaml` for bulk matching, then re-initialise:
+Install the extras for the best results (local embeddings and the sqlite-vec index; without them the categoriser falls back to character n-grams and a NumPy index and still works):
 
 ```sh
-ledger init
+pip install -e ".[vectors]"
 ```
+
+Then run the first-time setup. It labels every merchant from the categories already in your ledger (if you have any), indexes the ledger, and tells you what is left and how to measure it:
+
+```sh
+ledger categorise --setup
+ledger categorise --evaluate 2025-07-01   # optional: how well it does on your data
+```
+
+Each new statement is then filed by known merchants first, then by the most similar ones you have filed. What is left over can be filed three ways:
+
+- **Dashboard:** suggestion chips on uncategorised rows, and "Merchants to check" for the calls only you can make.
+- **Claude API:** `pip install -e ".[llm]"`, then `ledger categorise --llm --dry-run` and without `--dry-run`. This sends the pending rows' descriptions, dates and amounts to Anthropic. Put your own conventions ("cafés are Coffee") in `config/categorising-guide.md` and they are sent with every batch.
+- **Any LLM, by hand:** `ledger categorise --export pending.json`, file it, `ledger categorise --import answers.json`.
+
+**Receipts make the long tail much easier.** If you read your email with [himalaya](https://github.com/pimalaya/himalaya), copy `config/receipts.yaml.example` to `config/receipts.yaml` and run `ledger receipts`. It matches purchases to their email receipts (PayPal by transaction id, everything else by sender and exact amount) and keeps what was bought, which then goes with each row to `--export` and `--llm`. A $30 Amazon charge is filed as the tyre inflator it was.
+
+## 9. Fix uncategorized transactions
+
+In the Transactions view, filter by category "Uncategorized". Each row shows suggestion chips from the most similar merchants you have filed; click one, or change the category yourself. Either way the merchant is labelled, so its later transactions are filed the same way, and the dashboard offers to move its other rows too.
+
+If you already have a categorised ledger, label every merchant in it once, then recategorise the rows you have not confirmed:
+
+```sh
+ledger categorise --seed
+ledger categorise --rerun
+```
+
+For a large backlog, use `ledger categorise --llm` or the `--export`/`--import` round trip above (see the [CLI reference](/docs/cli#ledger-categorise)).
 
 ## Next steps
 

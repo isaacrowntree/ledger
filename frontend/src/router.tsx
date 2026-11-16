@@ -14,6 +14,7 @@ import { Transactions } from "./views/money/Transactions";
 import { Budget } from "./views/money/Budget";
 import { Recurring } from "./views/money/Recurring";
 import { Shared } from "./views/money/Shared";
+import { MerchantReview } from "./views/money/MerchantReview";
 import { FinancialYear } from "./views/tax/FinancialYear";
 import { AtoReturn } from "./views/tax/AtoReturn";
 import { Lodgement } from "./views/tax/Lodgement";
@@ -32,6 +33,7 @@ const AREAS = [
     label: "Money",
     children: [
       { to: "/money/transactions", label: "Transactions" },
+      { to: "/money/merchants", label: "Merchants to check" },
       { to: "/money/budget", label: "Budget" },
       { to: "/money/shared", label: "Shared expenses" },
       { to: "/money/recurring", label: "Recurring" },
@@ -113,6 +115,7 @@ const routeTree = root.addChildren([
       ...(isoDay(s.to) ? { to: isoDay(s.to) } : {}),
     }),
   }),
+  r("/money/merchants", MerchantReview),
   r("/money/budget", Budget),
   r("/money/shared", Shared),
   r("/money/recurring", Recurring),

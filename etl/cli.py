@@ -6,7 +6,7 @@ from pathlib import Path
 from etl import db
 from etl.models import RawTransaction
 from etl.categorizer import Categorizer
-from etl.currency import extract_fx_rates
+from etl.currency import convert_unconverted, extract_fx_rates
 from etl.engine import as_raw_transaction, ingest_statement
 from etl.shared import SharedRules, mark_shared
 from etl.normalizer import load_payment_patterns
@@ -155,6 +155,45 @@ def main():
     dedup_parser = sub.add_parser("dedup", help="Find and resolve cross-account duplicate transactions")
     dedup_parser.add_argument("--dry-run", action="store_true", help="Preview without writing to DB")
 
+    cat_parser = sub.add_parser(
+        "categorise", help="Label merchants, recategorise, or measure the categoriser")
+    cat_mode = cat_parser.add_mutually_exclusive_group(required=True)
+    cat_mode.add_argument("--seed", action="store_true",
+                          help="Label every merchant from the categories already in the ledger")
+    cat_mode.add_argument("--rerun", action="store_true",
+                          help="Recategorise every row you have not confirmed")
+    cat_mode.add_argument("--evaluate", metavar="YYYY-MM-DD",
+                          help="Learn from rows before this date, score the guesses for rows after it")
+    cat_mode.add_argument("--stats", action="store_true", help="Show how many merchants are labelled")
+    cat_mode.add_argument("--export", metavar="FILE",
+                          help="Write pending rows, with similar filed merchants, as JSON for Claude to file")
+    cat_mode.add_argument("--import", dest="import_", metavar="FILE",
+                          help="File answers ({id: {category, bucket, alternative, note}})")
+    cat_mode.add_argument("--llm", action="store_true",
+                          help="File pending rows with the Claude API (sends their details to Anthropic)")
+    cat_mode.add_argument("--setup", action="store_true",
+                          help="First run: label merchants from your existing categories and index the ledger")
+    cat_parser.add_argument("--model", default=None, help="With --llm: the Claude model to use")
+    cat_parser.add_argument("--limit", type=int, default=None, help="With --llm: at most this many rows")
+    cat_parser.add_argument("--guide", default=None,
+                            help="With --llm: a file of your filing conventions (default config/categorising-guide.md)")
+    cat_parser.add_argument("--dry-run", action="store_true", help="With --rerun or --import: show changes without writing")
+
+    rcpt_parser = sub.add_parser(
+        "receipts", help="Match purchases to their email receipts (via himalaya) and keep the items")
+    rcpt_parser.add_argument("--since", metavar="YYYY-MM-DD", help="Only purchases from this date")
+    rcpt_parser.add_argument("--all", dest="everything", action="store_true",
+                             help="Every purchase, not just the ones where the item could change the category")
+    rcpt_parser.add_argument("--dry-run", action="store_true", help="Count matches without writing")
+
+    reimb_parser = sub.add_parser(
+        "reimbursements", help="Link deposits from people to the purchases they pay back")
+    reimb_parser.add_argument("--dry-run", action="store_true", help="Count matches without writing")
+    reimb_parser.add_argument("--export", metavar="FILE",
+                              help="Write ambiguous deposits and their candidate purchases for Claude")
+    reimb_parser.add_argument("--import", dest="import_", metavar="FILE",
+                              help="Link Claude's choices ({deposit id: purchase id or null})")
+
     tag_parser = sub.add_parser("tag", help="Bulk tag/recategorize transactions matching a description pattern")
     tag_parser.add_argument("--pattern", required=True, help="SQL LIKE pattern matched against description (case-insensitive)")
     tag_parser.add_argument("--from", dest="date_from", help="Start date YYYY-MM-DD")
@@ -186,6 +225,19 @@ def main():
         cmd_cgt(fy=args.fy, carried_forward_losses=args.carried_forward_losses)
     elif args.command == "dedup":
         cmd_dedup(dry_run=args.dry_run)
+    elif args.command == "categorise":
+        from etl.categorise_cmd import run as cmd_categorise
+        cmd_categorise(CONFIG_DIR / "categories.yaml", seed=args.seed, rerun=args.rerun,
+                       evaluate=args.evaluate, stats=args.stats, dry_run=args.dry_run,
+                       export=args.export, import_=args.import_, llm=args.llm, setup=args.setup,
+                       model=args.model, limit=args.limit, guide=args.guide)
+    elif args.command == "receipts":
+        from etl.receipts import run as cmd_receipts
+        cmd_receipts(CONFIG_DIR / "receipts.yaml", since=args.since, everything=args.everything,
+                     dry_run=args.dry_run)
+    elif args.command == "reimbursements":
+        from etl.reimburse import run as cmd_reimbursements
+        cmd_reimbursements(export=args.export, import_=args.import_, dry_run=args.dry_run)
     elif args.command == "tag":
         cmd_tag(
             pattern=args.pattern,
@@ -305,6 +357,11 @@ def cmd_ingest(source: str | None = None, dry_run: bool = False,
     conn.commit()
     conn.close()
 
+    if not dry_run:
+        converted = convert_unconverted(conn)
+        if converted:
+            print(f"\nConverted {len(converted)} foreign-currency rows PayPal left unconverted "
+                  f"(rate from the nearest converted rows; noted '{'FX estimated'}')")
     summary = f"\nDone. Total inserted: {total_inserted}, Total skipped: {total_skipped}"
     if total_rejected:
         summary += f", REFUSED: {total_rejected} statement(s)"

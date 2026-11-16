@@ -9,7 +9,7 @@ import {
   type RowSelectionState,
   type SortingState,
 } from "@tanstack/react-table";
-import { api, type Transaction } from "../../api";
+import { type Transaction } from "../../api";
 import { PageLayout, PeriodPicker, Summary } from "../../components/layout";
 import { Loaded, Money } from "../../components/ui";
 import { displayDate } from "../../lib/format";
@@ -168,9 +168,8 @@ export function TxnTable({ rows, categories, grouped = false }: { rows: Transact
   const shared = useSharedMutations();
 
   const changeCategory = async (t: Transaction, category: string) => {
-    await update.mutateAsync({ id: t.id, data: { category_name: category } });
-    const same = await api.transactions({ search: t.description, transfers: "1", limit: "1000" });
-    const ids = same.filter((o) => o.id !== t.id && o.description === t.description && o.category_name !== category).map((o) => o.id);
+    const res = await update.mutateAsync({ id: t.id, data: { category_name: category } });
+    const ids = res.same_merchant ?? [];
     setOffer(ids.length ? { description: t.description, category, ids } : null);
   };
 
@@ -220,6 +219,17 @@ export function TxnTable({ rows, categories, grouped = false }: { rows: Transact
             <i className="cat-dot" style={{ background: categoryColor(c.getValue()) }} />
             <SavedSelect value={c.getValue() ?? ""} options={categories}
                          onSave={(v) => changeCategory(c.row.original, v)} />
+            {c.row.original.suggestions?.length ? (
+              <span className="suggest" aria-label="Suggested categories">
+                {c.row.original.suggestions.map((s) => (
+                  <button key={s.category} type="button" className="suggest-chip"
+                          title={`Similar merchants: ${Math.round(s.score * 100)}% of the vote`}
+                          onClick={() => changeCategory(c.row.original, s.category)}>
+                    {s.category}
+                  </button>
+                ))}
+              </span>
+            ) : null}
           </span>
         ),
       }),
@@ -275,13 +285,14 @@ export function TxnTable({ rows, categories, grouped = false }: { rows: Transact
       {offer && (
         <div className="notice offer">
           <span>
-            {offer.ids.length} other “{offer.description}” transaction{offer.ids.length === 1 ? " is" : "s are"} filed differently.
+            {offer.ids.length} other transaction{offer.ids.length === 1 ? "" : "s"} from the merchant
+            in “{offer.description}” {offer.ids.length === 1 ? "is" : "are"} filed differently.
             Move {offer.ids.length === 1 ? "it" : "them"} to {offer.category} too?
           </span>
           <span>
             <button type="button" disabled={!!busy}
                     onClick={async () => {
-                      await each("apply", (t) => update.mutateAsync({ id: t.id, data: { category_name: offer.category } }),
+                      await each("apply", (t) => update.mutateAsync({ id: t.id, data: { category_name: offer.category, learn: false } }),
                         offer.ids.map((id) => ({ id }) as Transaction));
                       setOffer(null);
                     }}>
