@@ -11,6 +11,25 @@ Start it with:
 python -m api
 ```
 
+### Running it on another machine
+
+To keep the dashboard running on a home server (a Raspberry Pi, a NAS) and open
+it from other devices, set where it listens:
+
+```sh
+LEDGER_HOST=0.0.0.0 LEDGER_PORT=5050 python -m api
+```
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `LEDGER_HOST` | `127.0.0.1` | Address to listen on. `0.0.0.0` serves your local network |
+| `LEDGER_PORT` | `5050` | Port |
+| `LEDGER_DEBUG` | on for `127.0.0.1`, off otherwise | Flask's debugger and auto-reload. Refused on any non-loopback address, because its error page runs any code typed into it |
+
+The dashboard has no login. Serve it only on a network you trust, and never
+forward it to the internet; reach it from outside through a VPN or an SSH
+tunnel instead.
+
 ## Dashboard tab
 
 The main overview with:

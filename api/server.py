@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 import yaml
@@ -1944,10 +1945,34 @@ def api_delete_shared_expense(se_id: int):
     return jsonify({"ok": True})
 
 
+LOOPBACK = {"127.0.0.1", "localhost", "::1"}
+
+
+def run_options(env=os.environ) -> dict:
+    """Where to listen, from LEDGER_HOST / LEDGER_PORT / LEDGER_DEBUG.
+
+    The default is this machine only, with Flask's debugger and reloader on for
+    development. The debugger runs any code typed into its error page, so it is
+    refused on any address other than loopback: serving the dashboard to a home
+    network (LEDGER_HOST=0.0.0.0) always runs without it. The dashboard has no
+    login, so only serve it on a network you trust, never the internet.
+    """
+    host = env.get("LEDGER_HOST", "127.0.0.1")
+    port = int(env.get("LEDGER_PORT", "5050"))
+    wanted = env.get("LEDGER_DEBUG")
+    debug = (wanted == "1") if wanted is not None else host in LOOPBACK
+    if debug and host not in LOOPBACK:
+        raise SystemExit("LEDGER_DEBUG=1 is only allowed on a loopback address: "
+                         "the debugger would let anyone on the network run code.")
+    return {"host": host, "port": port, "debug": debug, "threaded": True}
+
+
 def main():
     db.load_categories_from_config(get_conn(), CONFIG_DIR / "categories.yaml")
-    print("Ledger API running on http://localhost:5050")
-    app.run(host="127.0.0.1", port=5050, debug=True)
+    opts = run_options()
+    shown = "localhost" if opts["host"] in LOOPBACK else opts["host"]
+    print(f"Ledger API running on http://{shown}:{opts['port']}")
+    app.run(**opts)
 
 
 if __name__ == "__main__":
