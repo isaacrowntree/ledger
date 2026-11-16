@@ -24,7 +24,7 @@ _NOISE = [
     re.compile(r"\(\s*[\d.,]+\s+[A-Z]{3}\s*\)"),      # (100.00 USD)
     re.compile(r"\$[\d.,]+"),                          # Transaction $12.50
     # Reference codes: a token of 6+ letters/digits with at least two digits
-    # (HMAB12CD34, A-7WNQN3SG). One digit is a name: 7-ELEVEN, 3M.
+    # (HMAB12CD34, A-1ABC2DEF3). One digit is a name: 7-ELEVEN, 3M.
     re.compile(r"(?<![A-Z0-9])(?=(?:[A-Z-]*\d){2})[A-Z0-9-]{6,}(?![A-Z0-9])"),
     re.compile(r"\d{3,}"),
 ]
