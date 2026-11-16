@@ -6,6 +6,8 @@ export const queryClient = new QueryClient({
     queries: {
       staleTime: 60_000,
       refetchOnWindowFocus: false,
+      // One retry: a stopped API should say so in seconds, not after three backoffs.
+      retry: 1,
       // Keep the previous figures on screen while a filter change loads, so the
       // layout does not jump to a spinner and back.
       placeholderData: keepPreviousData,

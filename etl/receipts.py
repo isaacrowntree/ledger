@@ -49,13 +49,27 @@ class Himalaya:
     def __init__(self, binary: str = "himalaya"):
         self.binary = binary
 
+    PAGE = 1000
+
     def search(self, account: str, mailbox: str, query: str) -> list[dict]:
-        out = subprocess.run([self.binary, "--json", "-a", account, "envelope", "search", "-m", mailbox,
-                              "-s", "5000", "--", query], capture_output=True, text=True, timeout=600)
-        try:
-            return json.loads(out.stdout).get("envelopes", [])
-        except (json.JSONDecodeError, AttributeError):
-            return []
+        """Every envelope matching the query, a page at a time. Raises when himalaya fails."""
+        found: list[dict] = []
+        page = 1
+        while True:
+            out = subprocess.run([self.binary, "--json", "-a", account, "envelope", "search", "-m", mailbox,
+                                  "-s", str(self.PAGE), "-p", str(page), "--", query],
+                                 capture_output=True, text=True, timeout=600)
+            if out.returncode != 0:
+                raise RuntimeError(f"himalaya search failed ({account}: {query}): {out.stderr.strip()[:300]}")
+            try:
+                data = json.loads(out.stdout)
+            except json.JSONDecodeError as e:
+                raise RuntimeError(f"himalaya returned something other than JSON: {e}") from e
+            batch = data.get("envelopes", []) if isinstance(data, dict) else data
+            found.extend(batch)
+            if len(batch) < self.PAGE:
+                return found
+            page += 1
 
     def read(self, account: str, mailbox: str, message_id: str) -> str:
         return subprocess.run([self.binary, "-a", account, "message", "read", "-m", mailbox, str(message_id)],

@@ -12,6 +12,7 @@ strips that noise so the same merchant always gives the same key.
     'WOOLWORTHS'
 """
 import re
+from functools import lru_cache
 
 # Fixed-width card statements (Bankwest, Amex) pad merchant, suburb and
 # reference into columns. The first column is the merchant.
@@ -44,6 +45,7 @@ _PLACE = {
 }
 
 
+@lru_cache(maxsize=1 << 16)
 def merchant_key(description: str) -> str:
     s = description.upper().strip()
     first = _COLUMN_GAP.split(s, maxsplit=1)[0]

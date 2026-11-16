@@ -220,14 +220,18 @@ export function TxnTable({ rows, categories, grouped = false }: { rows: Transact
             <SavedSelect value={c.getValue() ?? ""} options={categories}
                          onSave={(v) => changeCategory(c.row.original, v)} />
             {c.row.original.suggestions?.length ? (
-              <span className="suggest" aria-label="Suggested categories">
-                {c.row.original.suggestions.map((s) => (
-                  <button key={s.category} type="button" className="suggest-chip"
-                          title={`Similar merchants: ${Math.round(s.score * 100)}% of the vote`}
-                          onClick={() => changeCategory(c.row.original, s.category)}>
-                    {s.category}
-                  </button>
-                ))}
+              <span className="suggest" role="group"
+                    aria-label={`Suggested categories for ${c.row.original.description}`}>
+                {c.row.original.suggestions.map((s) => {
+                  const share = Math.round(s.score * 100);
+                  return (
+                    <button key={s.category} type="button" className="suggest-chip"
+                            aria-label={`File as ${s.category} (${share}% of similar merchants)`}
+                            onClick={() => changeCategory(c.row.original, s.category)}>
+                      {s.category} <span className="suggest-share" aria-hidden="true">{share}%</span>
+                    </button>
+                  );
+                })}
               </span>
             ) : null}
           </span>
@@ -283,7 +287,7 @@ export function TxnTable({ rows, categories, grouped = false }: { rows: Transact
   return (
     <>
       {offer && (
-        <div className="notice offer">
+        <div className="notice offer" role="status" aria-live="polite">
           <span>
             {offer.ids.length} other transaction{offer.ids.length === 1 ? "" : "s"} from the merchant
             in “{offer.description}” {offer.ids.length === 1 ? "is" : "are"} filed differently.
@@ -431,7 +435,7 @@ function SavedInput({ value, onSave }: { value: string; onSave: (v: string) => P
   useEffect(() => setV(value), [value]);
   return (
     <input type="text" className={`cell-edit ${saved ? "saved" : ""} ${failed ? "failed" : ""}`} value={v}
-           placeholder="Add a note" aria-label="Note" title={failed || undefined}
+           placeholder="Add a note" aria-label="Note" title={failed || v || undefined}
            onChange={(e) => setV(e.target.value)}
            onBlur={async () => {
              if (v === value) return;

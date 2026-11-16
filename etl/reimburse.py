@@ -274,6 +274,12 @@ def run(export: str | None = None, import_: str | None = None, dry_run: bool = F
                 print(f"deposit {dep_id}: purchase {purchase_id} is no longer a candidate; skipped")
                 skipped += 1
                 continue
+            cat = conn.execute("SELECT category_id FROM transactions WHERE id = ?", (purchase_id,)).fetchone()
+            if cat and _category_name(conn, cat[0]).startswith(TAX_RELEVANT):
+                print(f"deposit {dep_id}: purchase {purchase_id} is tax-relevant; left for the owner")
+                ask.append(int(dep_id))
+                skipped += 1
+                continue
             if not dry_run:
                 link(conn, dep["id"], purchase_id, "claude")
             done += 1

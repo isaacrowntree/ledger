@@ -5,7 +5,7 @@ from pathlib import Path
 
 from etl import db
 from etl.categorizer import CONFIDENCE, Categorizer
-from etl.merchant_store import NOT_A_REPAYMENT
+from etl.merchant_store import NOT_A_REPAYMENT, follow_purchases
 from etl.models import RawTransaction
 
 
@@ -308,11 +308,15 @@ def import_answers(conn, categorizer: Categorizer, answers: dict, dry_run: bool)
             store.learn(row["description"], row["amount"], cat_id, origin="llm", commit=False)
         elif bucket == "unsure":
             key = store.learn(row["description"], row["amount"], cat_id, origin="llm", commit=False)
-            if key:
+            held = key and conn.execute(
+                "SELECT 1 FROM merchant_labels WHERE merchant = ? AND direction = ? AND category_id = ?",
+                (key, "in" if row["amount"] > 0 else "out", cat_id)).fetchone()
+            if held:
                 alt = ids.get(ans.get("alternative") or "")
                 store.flag(key, "in" if row["amount"] > 0 else "out", alt,
                            ans.get("note") or "Claude couldn't tell", commit=False)
     if not dry_run:
+        follow_purchases(conn)
         conn.commit()
     print(f"{counts['sure']} filed and learned, {counts['likely']} filed for review, "
           f"{counts['unsure']} sent to Merchants to check, {skipped} skipped"
