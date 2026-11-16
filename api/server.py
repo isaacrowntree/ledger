@@ -10,7 +10,7 @@ from api.schemas import body, sql_value
 
 from etl import db
 from etl.merchant import direction as direction_of, merchant_key
-from etl.merchant_store import MerchantStore
+from etl.merchant_store import MerchantStore, follow_purchases
 from etl.cpi import sync_cpi, get_cpi_for_year, get_cpi_history, get_latest_cpi, adjust_for_inflation
 from etl.dedup import find_duplicates, resolve_duplicates
 from etl.reconcile import current_balance
@@ -181,7 +181,7 @@ def api_transactions():
     # Suggestions for Uncategorized rows, embedded in one batch.
     wanted = [d for d in results if d["category_name"] in (None, "Uncategorized")][:SUGGEST_LIMIT]
     if wanted:
-        store = MerchantStore(conn)
+        store = MerchantStore(conn, rebuild=False)
         names = {c["id"]: c["name"] for c in conn.execute("SELECT id, name FROM categories")}
         for d, vec in zip(wanted, store.embed([d["description"] for d in wanted])):
             d["suggestions"] = [
@@ -200,7 +200,6 @@ SUGGEST_LIMIT = 300
 def api_merchants_to_review():
     """Merchants someone should file: Claude and the old rules disagreed, or Claude was unsure."""
     conn = get_conn()
-    store = MerchantStore(conn)
     labels = conn.execute(
         """SELECT l.id, l.merchant, l.direction, l.note, l.origin, c.name AS category, a.name AS alternative
            FROM merchant_labels l JOIN categories c ON c.id = l.category_id
@@ -235,7 +234,7 @@ def api_decide_merchant(label_id: int):
         conn.close()
         abort(400, description=f"no category named {data.category_name!r}")
     try:
-        ids = MerchantStore(conn).decide(label_id, cat["id"])
+        ids = MerchantStore(conn, rebuild=False).decide(label_id, cat["id"])
     except KeyError:
         conn.close()
         abort(404, description=f"no merchant label {label_id}")
@@ -265,9 +264,16 @@ def api_transactions_summary():
 
 def _same_merchant_filed_elsewhere(conn, txn_id: int, description: str, amount: float,
                                    category_id: int) -> list[int]:
-    """Unconfirmed rows from the same merchant (and direction) under another category."""
-    ids = MerchantStore(conn).transactions_of(
-        merchant_key(description), direction_of(amount), confirmed=False)
+    """Unconfirmed rows from the same merchant (and direction) under another category.
+
+    None for a mixed merchant: its rows are filed one by one, so there's nothing to offer.
+    """
+    key, direction = merchant_key(description), direction_of(amount)
+    mixed = conn.execute("SELECT 1 FROM merchant_labels WHERE merchant = ? AND direction = ? AND mixed = 1",
+                         (key, direction)).fetchone()
+    if mixed:
+        return []
+    ids = MerchantStore(conn, rebuild=False).transactions_of(key, direction, confirmed=False)
     if not ids:
         return []
     others = {r[0] for r in conn.execute(
@@ -299,9 +305,10 @@ def api_update_transaction(txn_id: int):
         )
         if data.learn:
             # File the merchant, so its later transactions land here by themselves.
-            MerchantStore(conn).learn(txn_row["description"], txn_row["amount"], cat_row["id"], commit=False)
+            MerchantStore(conn, rebuild=False).learn(txn_row["description"], txn_row["amount"], cat_row["id"], commit=False)
             same_merchant = _same_merchant_filed_elsewhere(
                 conn, txn_id, txn_row["description"], txn_row["amount"], cat_row["id"])
+        follow_purchases(conn)
 
     if data.notes is not None:
         conn.execute("UPDATE transactions SET notes = ? WHERE id = ?", (data.notes or None, txn_id))

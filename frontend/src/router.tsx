@@ -1,4 +1,6 @@
 import type { ReactNode } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { api } from "./api";
 import {
   createHashHistory,
   createRootRoute,
@@ -65,6 +67,13 @@ function areaOf(pathname: string): string {
   return first === "money" || first === "tax" || first === "analysis" ? first : "overview";
 }
 
+/** How many merchants wait for a decision, so the page is found without visiting it. */
+function ReviewCount() {
+  const q = useQuery({ queryKey: ["merchants-review"], queryFn: api.merchantsToReview });
+  const n = q.data?.length ?? 0;
+  return n ? <span className="rail-count" aria-label={`, ${n} waiting`}>{n}</span> : null;
+}
+
 function Shell() {
   const pathname = useRouterState({ select: (st) => st.location.pathname });
   return (
@@ -77,7 +86,7 @@ function Shell() {
             {a.children.length > 0 && (
               <ul>
                 {a.children.map((c) => (
-                  <li key={c.to}><Link to={c.to}>{c.label}</Link></li>
+                  <li key={c.to}><Link to={c.to}>{c.label}{c.to === "/money/merchants" ? <ReviewCount /> : null}</Link></li>
                 ))}
               </ul>
             )}

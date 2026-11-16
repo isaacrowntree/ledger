@@ -134,6 +134,8 @@ def test_uncategorized_rows_carry_suggestions(client):
         reference_id=None, source_type="test", dedup_hash="h-sugg", source_file="t.csv",
         raw_data="{}", is_transfer=False)
     conn.commit()
+    from etl.merchant_store import MerchantStore
+    MerchantStore(conn).sync_transactions()      # the CLI builds the index; the API never does
     conn.close()
     rows = client.get("/api/transactions").get_json()
     new = next(t for t in rows if t["description"] == "SUPERMARKETS")

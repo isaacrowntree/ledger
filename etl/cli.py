@@ -595,7 +595,8 @@ def cmd_tag(
 
     for r in rows:
         if cat_id is not None:
-            conn.execute("UPDATE transactions SET category_id=? WHERE id=?", (cat_id, r["id"]))
+            conn.execute("UPDATE transactions SET category_id=?, category_confidence=1.0 WHERE id=?",
+                         (cat_id, r["id"]))
         if clear_transfer:
             conn.execute("UPDATE transactions SET is_transfer=0 WHERE id=?", (r["id"],))
         if tag:

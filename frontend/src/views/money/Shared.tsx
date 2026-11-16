@@ -118,6 +118,7 @@ function GroupRows({ label, rows }: { label: string; rows: SharedExpenseItem[] }
 function SharedRow({ item }: { item: SharedExpenseItem }) {
   const { update, remove } = useSharedMutations();
   const [pct, setPct] = useState(String(item.split_pct));
+  const [confirming, setConfirming] = useState(false);
   return (
     <tr className={item.is_settled ? "settled" : ""}>
       <td style={{ whiteSpace: "nowrap" }}>{displayDate(item.date)}</td>
@@ -127,7 +128,7 @@ function SharedRow({ item }: { item: SharedExpenseItem }) {
       </td>
       <td className="num"><Money value={Math.abs(item.amount)} tone="plain" /></td>
       <td>
-        <input type="number" min={0} max={100} step={5} value={pct} aria-label="Their percentage"
+        <input type="number" min={0} max={100} step={5} value={pct} aria-label={`Their percentage of ${item.description}`}
                onChange={(e) => setPct(e.target.value)}
                onBlur={() => {
                  const n = parseFloat(pct);
@@ -137,12 +138,20 @@ function SharedRow({ item }: { item: SharedExpenseItem }) {
       <td className="num"><Money value={item.share_amount} /></td>
       <td className="muted">{item.category_name}</td>
       <td>
-        <input type="checkbox" checked={!!item.is_settled} aria-label="Paid back"
+        <input type="checkbox" checked={!!item.is_settled} aria-label={`${item.description} paid back`}
                onChange={(e) => update.mutate({ id: item.id, data: { is_settled: e.target.checked } })} />
       </td>
       <td>
-        <button type="button" className="quiet" title="Remove from shared expenses"
-                onClick={() => remove.mutate(item.id)}>Remove</button>
+        {confirming ? (
+          <span className="confirm-remove">
+            <button type="button" className="danger" onClick={() => remove.mutate(item.id)}
+                    aria-label={`Confirm removing ${item.description} from shared expenses`}>Remove</button>
+            <button type="button" className="quiet" onClick={() => setConfirming(false)}>Keep</button>
+          </span>
+        ) : (
+          <button type="button" className="quiet" aria-label={`Remove ${item.description} from shared expenses`}
+                  onClick={() => setConfirming(true)}>Remove…</button>
+        )}
       </td>
     </tr>
   );

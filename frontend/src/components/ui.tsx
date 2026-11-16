@@ -68,7 +68,7 @@ export function Loaded<T>({ query, children }: { query: UseQueryResult<T>; child
       </div>
     );
   }
-  if (query.data === undefined) return <div className="loading">Loading…</div>;
+  if (query.data === undefined) return <div className="loading" role="status">Loading…</div>;
   return <>{children(query.data)}</>;
 }
 

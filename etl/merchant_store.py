@@ -38,6 +38,20 @@ GUESS_CONFIDENCES = (0.6, 0.55, 0.5)
 # the payer as a merchant, so it is never evidence either.
 NOT_A_REPAYMENT = "NOT EXISTS (SELECT 1 FROM reimbursements r WHERE r.deposit_id = t.id)"
 
+
+def follow_purchases(conn) -> int:
+    """Keep each linked repayment in the category of the purchase it repaid.
+
+    Run after anything refiles purchases, so a refiled dinner takes its
+    repayments with it. Returns the number of repayments moved.
+    """
+    return conn.execute(
+        """UPDATE transactions SET category_id = (
+               SELECT p.category_id FROM reimbursements r JOIN transactions p ON p.id = r.purchase_id
+               WHERE r.deposit_id = transactions.id LIMIT 1)
+           WHERE id IN (SELECT r.deposit_id FROM reimbursements r JOIN transactions p ON p.id = r.purchase_id
+                        WHERE p.category_id IS NOT transactions.category_id)""").rowcount
+
 ORIGIN_RANK = {"bootstrap": 0, "llm": 1, "seed": 2, "human": 3}
 
 
@@ -57,12 +71,34 @@ class Suggestion:
 
 
 class MerchantStore:
-    def __init__(self, conn: sqlite3.Connection, embedder: Embedder | None = None):
+    """Labels plus the vector index. The embedder and index load on first use, so
+    reads and decisions that need no vectors (lookups, flags, decide) stay fast.
+
+    rebuild=False (the web API) never re-embeds the ledger inside a request: when
+    the index was built with another embedder or backend, similarity search is
+    simply unavailable until a CLI command (any `ledger categorise ...`) rebuilds it.
+    """
+    def __init__(self, conn: sqlite3.Connection, embedder: Embedder | None = None,
+                 rebuild: bool = True):
         self.conn = conn
-        self.embedder = embedder or default_embedder()
-        self.index = open_index(conn, self.embedder.dim)
-        self._ensure_index()
+        self._embedder = embedder
+        self._vindex = None
+        self._rebuild = rebuild
+        self.ready = True          # False when the index is stale and rebuild=False
         self._import_legacy_learned_rules()
+
+    @property
+    def embedder(self) -> Embedder:
+        if self._embedder is None:
+            self._embedder = default_embedder()
+        return self._embedder
+
+    @property
+    def index(self):
+        if self._vindex is None:
+            self._vindex = open_index(self.conn, self.embedder.dim)
+            self._ensure_index()
+        return self._vindex
 
     # --- index lifecycle -------------------------------------------------
 
@@ -72,15 +108,21 @@ class MerchantStore:
 
     def _ensure_index(self) -> None:
         """Create the vector index, or rebuild it if the embedder or backend changed."""
-        fingerprint = f"{self.embedder.name}|{self.index.backend}"
+        fingerprint = f"{self.embedder.name}|{self._vindex.backend}"
         if self._meta("embedder") == fingerprint:
             return
-        self.index.reset()
+        if not self._rebuild:
+            self.ready = False
+            return
+        # Labels and ledger rows are both re-embedded before the fingerprint is
+        # written, so an interrupted rebuild starts over next time.
+        self._vindex.reset()
+        self._index(self.conn.execute(
+            "SELECT id, COALESCE(example, merchant), direction FROM merchant_labels").fetchall())
+        self._embed_into("txn", self._vindex.missing_txns())
         self.conn.execute(
             "INSERT OR REPLACE INTO merchant_index_meta (key, value) VALUES ('embedder', ?)",
             (fingerprint,))
-        self._index(self.conn.execute(
-            "SELECT id, COALESCE(example, merchant), direction FROM merchant_labels").fetchall())
         self.conn.commit()
 
     def _index(self, rows) -> None:
@@ -89,6 +131,8 @@ class MerchantStore:
 
     def _embed_into(self, collection: str, rows) -> None:
         rows = list(rows)
+        if not rows or (self.index is not None and not self.ready):
+            return
         for start in range(0, len(rows), 1024):
             chunk = rows[start:start + 1024]
             vecs = self.embedder.embed([r[1].upper() for r in chunk])
@@ -96,6 +140,8 @@ class MerchantStore:
 
     def sync_transactions(self) -> int:
         """Embed ledger rows that are not in the index yet. Returns how many."""
+        if not self.ready or self.index is None:
+            return 0
         rows = self.index.missing_txns()
         self._embed_into("txn", rows)
         self.conn.commit()
@@ -177,6 +223,7 @@ class MerchantStore:
             """UPDATE transactions SET category_id = ?, category_confidence = 1.0,
                    is_transfer = CASE WHEN ? = ? THEN 1 WHEN category_id = ? THEN 0 ELSE is_transfer END
                WHERE id = ?""", [(category_id, category_id, transfers, transfers, i) for i in ids])
+        follow_purchases(self.conn)
         self.conn.commit()
         return ids
 
@@ -184,7 +231,9 @@ class MerchantStore:
         """Ids of the ledger rows from this merchant. confirmed=False leaves out rows a person confirmed."""
         sign = "amount > 0" if direction == "in" else "amount <= 0"
         extra = "" if confirmed else " AND COALESCE(category_confidence, 0) < 1"
-        rows = self.conn.execute(f"SELECT id, description FROM transactions WHERE {sign}{extra}").fetchall()
+        # A linked repayment is filed by the purchase it repaid, not by who sent it.
+        rows = self.conn.execute(
+            f"SELECT id, description FROM transactions t WHERE {sign}{extra} AND {NOT_A_REPAYMENT}").fetchall()
         return [r[0] for r in rows if merchant_key(r[1]) == key]
 
     def forget(self, description: str, amount: float) -> bool:
@@ -194,7 +243,8 @@ class MerchantStore:
             (merchant_key(description), direction_of(amount))).fetchone()
         if not row:
             return False
-        self.index.delete("merchant", [row[0]])
+        if self.ready and self.index is not None:
+            self.index.delete("merchant", [row[0]])
         self.conn.execute("DELETE FROM merchant_labels WHERE id = ?", (row[0],))
         self.conn.commit()
         return True
@@ -271,7 +321,7 @@ class MerchantStore:
         Labels awaiting a decision or marked mixed are not neighbours, and neither
         are ledger rows whose category isn't trusted (a guess from this index).
         """
-        if not merchant_key(description):
+        if not merchant_key(description) or (self.index is not None and not self.ready):
             return []
         if vec is None:
             vec = self.embedder.embed([description.upper()])[0]

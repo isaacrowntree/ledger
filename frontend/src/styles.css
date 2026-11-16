@@ -593,10 +593,13 @@ button.quiet, a { color: var(--area-ink); }
 .cat-cell { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
 .suggest { display: flex; gap: 4px; flex-wrap: wrap; }
 button.suggest-chip {
-  border-radius: 999px; min-height: 24px; padding: 1px 9px; font-size: 12px;
-  background: transparent; border: 1px dashed var(--rule-strong); color: var(--link);
+  border-radius: 999px; min-height: 32px; padding: 3px 12px; font-size: 12.5px;
+  background: transparent; color: var(--link);
+  /* mixed from the text colour so the dashed outline keeps 3:1 in both themes */
+  border: 1px dashed color-mix(in srgb, var(--ink) 55%, transparent);
 }
 button.suggest-chip:hover, button.suggest-chip:focus-visible { border-style: solid; background: var(--wash); }
+.suggest-share { color: var(--muted); font-size: 11.5px; margin-left: 2px; }
 .meter-fill.cat { background: var(--cat, var(--ink-2)); }
 .meter.over .meter-fill.cat { background: var(--owe); }
 
@@ -757,8 +760,22 @@ table.matrix td:first-child { white-space: nowrap; }
 .merchant-review { list-style: none; padding: 0; margin: 0; display: grid; gap: 12px; }
 .merchant-card { background: var(--surface); border: 1px solid var(--rule); border-radius: var(--radius-panel); padding: 12px 14px; }
 .merchant-head { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; justify-content: space-between; }
+.merchant-name { font-size: 15px; font-weight: 600; margin: 0; overflow-wrap: anywhere; }
+.merchant-name:focus { outline: none; }
+.merchant-name:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 .merchant-examples { list-style: none; padding: 0; margin: 8px 0; display: grid; gap: 2px; }
 .merchant-examples code { font-size: 12px; overflow-wrap: anywhere; }
 .merchant-note { margin: 0 0 8px; font-size: 13px; }
 .merchant-choices { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-.merchant-choices button .muted { font-size: 11px; margin-left: 4px; }
+.merchant-choices button .muted { font-size: 12px; margin-left: 4px; }
+.merchant-choices button.current { border-color: var(--ink); font-weight: 600; }
+.merchant-choices .other { display: inline-flex; gap: 6px; align-items: center; }
+.merchant-status { margin: 0 0 12px; }
+
+.rail-count {
+  display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 9px;
+  font-size: 11px; line-height: 18px; background: var(--area-ink); color: var(--paper);
+  font-variant-numeric: tabular-nums;
+}
+.confirm-remove { display: inline-flex; gap: 4px; white-space: nowrap; }
+button.danger { color: var(--owe); border-color: currentColor; background: transparent; padding: 2px 8px; min-height: 0; }
