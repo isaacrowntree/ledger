@@ -76,6 +76,7 @@ function ReviewCount() {
 
 function Shell() {
   const pathname = useRouterState({ select: (st) => st.location.pathname });
+  const current = AREAS.find((a) => a.children.length && areaOf(a.to) === areaOf(pathname));
   return (
     <div className="shell" data-area={areaOf(pathname)}>
       <nav className="rail" aria-label="Sections">
@@ -93,6 +94,15 @@ function Shell() {
           </div>
         ))}
       </nav>
+      {/* On a phone the rail is one row of areas; this row holds the current
+          area's pages, which the rail's lists can't show at that width. */}
+      {current && (
+        <nav className="subnav" aria-label={`${current.label} pages`}>
+          {current.children.map((c) => (
+            <Link key={c.to} to={c.to}>{c.label}{c.to === "/money/merchants" ? <ReviewCount /> : null}</Link>
+          ))}
+        </nav>
+      )}
       <main className="main">
         <Outlet />
       </main>

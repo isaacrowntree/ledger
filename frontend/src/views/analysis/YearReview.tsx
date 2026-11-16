@@ -65,27 +65,27 @@ export function YearReview() {
           <>
             {d.business.length > 0 && (
               <Section title="Business expenses">
-                <table className="ledger" style={{ maxWidth: 560 }}><tbody>
+                <div className="table-wrap"><table className="ledger" style={{ maxWidth: 560 }}><tbody>
                   {d.business.map((b) => <tr key={b.category}><td>{b.category}</td><td className="num muted">{b.count}</td><td className="num"><Money value={-Math.abs(b.total)} /></td></tr>)}
-                </tbody></table>
+                </tbody></table></div>
               </Section>
             )}
             <div className="grid-2">
               <Section title="Where you spent most often">
-                <table className="ledger"><thead><tr><th>Merchant</th><th className="num">Visits</th><th className="num">Total</th></tr></thead><tbody>
+                <div className="table-wrap"><table className="ledger"><thead><tr><th>Merchant</th><th className="num">Visits</th><th className="num">Total</th></tr></thead><tbody>
                   {d.top_merchants.map((m) => <tr key={m.description}><td>{m.description}</td><td className="num muted">{m.count}</td><td className="num"><Money value={-Math.abs(m.total)} /></td></tr>)}
-                </tbody></table>
+                </tbody></table></div>
               </Section>
               <Section title="Biggest single expenses">
-                <table className="ledger"><tbody>
+                <div className="table-wrap"><table className="ledger"><tbody>
                   {d.biggest_expenses.map((t, i) => <tr key={i}><td style={{ whiteSpace: "nowrap" }}>{displayDate(t.date)}</td><td>{t.description}</td><td className="num"><Money value={-Math.abs(t.amount)} /></td></tr>)}
-                </tbody></table>
+                </tbody></table></div>
               </Section>
             </div>
             <Section title="Biggest money in">
-              <table className="ledger"><tbody>
+              <div className="table-wrap"><table className="ledger"><tbody>
                 {d.biggest_income.map((t, i) => <tr key={i}><td style={{ whiteSpace: "nowrap" }}>{displayDate(t.date)}</td><td>{t.description}</td><td className="num"><Money value={t.amount} /></td></tr>)}
-              </tbody></table>
+              </tbody></table></div>
             </Section>
             <p className="hint">Sources: {d.sources.map((s) => `${s.source_type} (${s.count.toLocaleString("en-AU")})`).join(", ")}.</p>
           </>

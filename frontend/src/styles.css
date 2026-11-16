@@ -160,8 +160,24 @@ a { color: var(--link); }
   width: 100%;
 }
 
+.subnav { display: none; }
+
 @media (max-width: 860px) {
-  .shell { grid-template-columns: 1fr; }
+  /* minmax(0, …): a bare 1fr grows to its widest child (a table, a row of
+     buttons), which pushed every page past the edge of a phone. */
+  .shell { grid-template-columns: minmax(0, 1fr); }
+  .subnav {
+    display: flex; gap: 4px; overflow-x: auto; padding: 6px 12px;
+    border-bottom: 1px solid var(--rule); background: var(--surface);
+    scrollbar-width: none;
+  }
+  .subnav a {
+    flex: none; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
+    min-height: 40px; padding: 0 12px; border-radius: var(--radius-control);
+    color: var(--ink-2); text-decoration: none; font-size: 14px;
+  }
+  .subnav a[data-status="active"] { background: var(--area-wash); color: var(--area-ink); font-weight: 600; box-shadow: inset 0 -2px 0 var(--area); }
+  .subnav .rail-count { margin-left: 0; }
   .rail {
     position: static;
     height: auto;
@@ -614,7 +630,7 @@ button.suggest-chip:hover, button.suggest-chip:focus-visible { border-style: sol
 .page.has-aside .page-body { display: grid; grid-template-columns: minmax(0, 1fr) 272px; gap: 32px; align-items: start; }
 .page-aside { position: sticky; top: 24px; }
 @media (max-width: 1180px) {
-  .page.has-aside .page-body { grid-template-columns: 1fr; }
+  .page.has-aside .page-body { grid-template-columns: minmax(0, 1fr); }
   .page-aside { position: static; order: -1; }
 }
 .page-head .controls { margin-bottom: 0; }
@@ -782,3 +798,35 @@ button.danger { color: var(--owe); border-color: currentColor; background: trans
 .rail-area li a:has(.rail-count) { display: flex; align-items: center; justify-content: space-between; gap: 4px; white-space: nowrap; }
 .rail-area li a .rail-count { margin-left: 0; flex: none; }
 p.attention { background: var(--attention-wash); border-left: 3px solid var(--attention); padding: 8px 12px; margin: 8px 0; }
+
+/* ---------- Touch screens ---------- */
+@media (pointer: coarse) {
+  /* Fingers need bigger targets than a mouse (WCAG 2.5.5 suggests 44px). */
+  button, select, input[type="text"], input[type="search"], input[type="number"], input[type="date"], input[type="month"],
+  .rail-area > a { min-height: 44px; }
+  button.suggest-chip, button.chip-toggle { min-height: 40px; }
+  .cell-edit { min-height: 40px !important; }     /* beats the compact desktop rule */
+  button.copy { min-height: 40px; }
+  input[type="checkbox"] { width: 24px; height: 24px; }
+  table.matrix td a { display: block; min-height: 36px; line-height: 36px; }
+  .suggest-share, .figure-note { font-size: 12.5px; }
+  /* iOS zooms into any field under 16px when it's focused, then stays zoomed. */
+  select, input { font-size: 16px; }
+}
+@media (max-width: 860px) {
+  h1 { font-size: 24px; }
+  .section-head { flex-wrap: wrap; }
+  .grid-2 > *, .grid-3 > * { min-width: 0; }
+  .figures { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); }
+  .figure-value { font-size: 19px; }
+  .toolbar .query { flex-basis: 100%; }
+}
+/* Charts are drawn 760 units wide and scaled to fit, so 11-unit labels shrink
+   to about 5px on a phone. Larger units keep them near 9-10px on screen. */
+@media (max-width: 860px) { .chart text { font-size: 15px; } }
+@media (max-width: 520px) { .chart text { font-size: 20px; } .chart { overflow: visible; } }
+@media (max-width: 520px) {
+  /* Room for all four areas without scrolling the top row sideways. */
+  .rail .wordmark { display: none; }
+  .rail { gap: 10px; padding: 10px 12px; }
+}
