@@ -97,6 +97,13 @@ def items_from(text: str, subject: str) -> list[str]:
     return qty[:10] or ([subject] if subject else [])
 
 
+def _has_amount(text: str, amount: float) -> bool:
+    """The exact amount appears as a whole number in the text: 5.00 matches "$5.00",
+    not "15.00" or "105.00"; 1,234.50 matches with or without the comma."""
+    forms = {f"{amount:,.2f}", f"{amount:.2f}"}
+    return any(re.search(rf"(?<![\d.,]){re.escape(f)}(?!\d)", text) for f in forms)
+
+
 def _words(s: str) -> set[str]:
     return {w for w in re.findall(r"[A-Z]{4,}", (s or "").upper()) if w not in STOP}
 
@@ -182,7 +189,7 @@ def match(conn, accounts: list[Account], since: str, everything: bool = False,
                     key = str(env["id"])
                     if key not in texts:
                         texts[key] = to_text(mail.read(acct.name, acct.mailbox, env["id"]))
-                    if amt in texts[key] or amt.replace(",", "") in texts[key]:
+                    if _has_amount(texts[key], abs(r["amount"])):
                         done.add(r["id"]); found["amount"] += 1
                         if not dry_run:
                             _store(conn, r["id"], acct, env, texts[key], "amount")

@@ -64,7 +64,8 @@ def _deposits(conn):
     rows = conn.execute(
         """SELECT t.id, t.date, t.amount, t.description FROM transactions t
            JOIN categories c ON c.id = t.category_id
-           WHERE t.amount > 0 AND c.name IN ('Personal (non-assessable)', 'Uncategorized')
+           WHERE t.amount > 0 AND t.is_transfer = 0
+             AND c.name IN ('Personal (non-assessable)', 'Uncategorized')
              -- Rows the owner confirmed as Personal count too: confirming said "money
              -- from a person", and repayments are to offset what they repay.
              AND COALESCE(t.notes, '') NOT LIKE 'partner: house equity%'

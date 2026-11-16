@@ -30,6 +30,13 @@ from etl.vector_index import open_index
 # Rows at or above this confidence are trusted as neighbours: confirmed, labelled
 # or confidently filed by Claude, never a guess from the index itself (0.6).
 TRUSTED_CONFIDENCE = 0.85
+# Confidences the categoriser and Claude give to guesses: a nearest-merchant
+# guess, an unreviewed mixed-merchant row, a "likely"/"unsure" answer or a row
+# waiting for the owner. They are never evidence for a label.
+GUESS_CONFIDENCES = (0.6, 0.55, 0.5)
+# A repayment filed under what it repaid (etl/reimburse.py) says nothing about
+# the payer as a merchant, so it is never evidence either.
+NOT_A_REPAYMENT = "NOT EXISTS (SELECT 1 FROM reimbursements r WHERE r.deposit_id = t.id)"
 
 ORIGIN_RANK = {"bootstrap": 0, "llm": 1, "seed": 2, "human": 3}
 
@@ -132,9 +139,11 @@ class MerchantStore:
                 "VALUES (?, ?, ?, ?, ?)", (key, direction, category_id, origin, example))
             self._index([(cur.lastrowid, example or key, direction)])
         elif ORIGIN_RANK[origin] >= ORIGIN_RANK[existing["origin"]]:
+            # A person's choice settles a merchant that was waiting for one.
+            settled = ", needs_review = 0, alt_category_id = NULL" if origin == "human" else ""
             self.conn.execute(
                 "UPDATE merchant_labels SET category_id = ?, origin = ?, times_seen = times_seen + 1, "
-                "example = COALESCE(?, example), updated_at = datetime('now') WHERE id = ?",
+                f"example = COALESCE(?, example), updated_at = datetime('now'){settled} WHERE id = ?",
                 (category_id, origin, example, existing["id"]))
         if commit:
             self.conn.commit()
@@ -202,7 +211,10 @@ class MerchantStore:
         rows = self.conn.execute(
             """SELECT t.description, t.amount, t.category_id, t.category_confidence
                FROM transactions t JOIN categories c ON c.id = t.category_id
-               WHERE c.name != 'Uncategorized' AND t.date < ?""", (before or "9999",)).fetchall()
+               WHERE c.name != 'Uncategorized' AND t.date < ?
+                 AND COALESCE(t.category_confidence, 0) NOT IN (?, ?, ?)
+                 AND {NOT_A_REPAYMENT}""".format(NOT_A_REPAYMENT=NOT_A_REPAYMENT),
+            (before or "9999", *GUESS_CONFIDENCES)).fetchall()
         for r in rows:
             key = merchant_key(r["description"])
             if key:
@@ -248,8 +260,12 @@ class MerchantStore:
         if commit:
             self.conn.commit()
 
+    def embed(self, descriptions: list[str]):
+        """Vectors for many descriptions in one call (pass each to nearest/suggest as vec)."""
+        return self.embedder.embed([d.upper() for d in descriptions])
+
     def nearest(self, description: str, amount: float, k: int = 10,
-                exclude_txn: int | None = None) -> list[Neighbour]:
+                exclude_txn: int | None = None, vec=None) -> list[Neighbour]:
         """The k most similar labelled merchants and settled transactions, same direction.
 
         Labels awaiting a decision or marked mixed are not neighbours, and neither
@@ -257,7 +273,8 @@ class MerchantStore:
         """
         if not merchant_key(description):
             return []
-        vec = self.embedder.embed([description.upper()])[0]
+        if vec is None:
+            vec = self.embedder.embed([description.upper()])[0]
         d = direction_of(amount)
         found = []
         hits = dict(self.index.search("merchant", vec, d, k * 2))
@@ -276,15 +293,15 @@ class MerchantStore:
                     f"""SELECT t.id, t.description, t.category_id FROM transactions t
                         JOIN categories c ON c.id = t.category_id
                         WHERE t.id IN ({q}) AND t.category_confidence >= {TRUSTED_CONFIDENCE}
-                          AND c.name != 'Uncategorized'""", list(hits)):
+                          AND c.name != 'Uncategorized' AND {NOT_A_REPAYMENT}""", list(hits)):
                 found.append(Neighbour(merchant_key(r[1]), r[2], 1.0 - hits[r[0]], r[1]))
         found.sort(key=lambda n: -n.similarity)
         return found[:k]
 
     def suggest(self, description: str, amount: float, k: int = 10, top: int = 3,
-                exclude_txn: int | None = None) -> list[Suggestion]:
+                exclude_txn: int | None = None, vec=None) -> list[Suggestion]:
         """Categories ranked by the similarity-weighted vote of the nearest neighbours."""
-        neighbours = self.nearest(description, amount, k, exclude_txn)
+        neighbours = self.nearest(description, amount, k, exclude_txn, vec)
         weights: Counter = Counter()
         best: dict[int, float] = {}
         for n in neighbours:

@@ -5,6 +5,7 @@ from pathlib import Path
 
 from etl import db
 from etl.categorizer import CONFIDENCE, Categorizer
+from etl.merchant_store import NOT_A_REPAYMENT
 from etl.models import RawTransaction
 
 
@@ -65,16 +66,27 @@ def _txn(r) -> RawTransaction:
 
 
 def _rerun(conn, categorizer: Categorizer, dry_run: bool) -> None:
-    """Recategorise rows nobody confirmed. Confirmed rows (confidence 1.0) are left alone."""
+    """Recategorise rows nobody confirmed or decided.
+
+    Left alone: confirmed rows (1.0), Claude's likely/unsure answers and rows
+    waiting on the owner (0.5), linked repayments, and rows of a mixed merchant
+    that were already decided one by one.
+    """
     names = _names(conn)
     transfers = db.get_category_id(conn, "Transfers")
     rows = conn.execute(
-        "SELECT id, date, description, amount, source_type, category_id FROM transactions "
-        "WHERE COALESCE(category_confidence, 0) < 1").fetchall()
+        "SELECT id, date, description, amount, source_type, category_id, category_confidence "
+        "FROM transactions t WHERE COALESCE(category_confidence, 0) < 1 "
+        # Claude's likely/unsure answers and rows waiting for the owner stay as
+        # filed; a linked repayment is filed under what it repaid, not by its payer.
+        f"AND COALESCE(category_confidence, 0) != {LLM_REVIEW_CONFIDENCE} "
+        f"AND {NOT_A_REPAYMENT}").fetchall()
     moves: Counter = Counter()
     updates = []
     for r in rows:
         cat_id, conf = categorizer.categorize(_txn(r))
+        if conf == CONFIDENCE["mixed"] and (r["category_confidence"] or 0) > CONFIDENCE["mixed"]:
+            continue    # a mixed merchant's row someone already decided keeps that decision
         if cat_id != r["category_id"]:
             moves[(names.get(r["category_id"]), names.get(cat_id))] += 1
         updates.append((cat_id, conf, cat_id, transfers, r["category_id"], transfers, r["id"]))
@@ -206,8 +218,9 @@ def pending_payload(conn, categorizer: Categorizer, limit: int | None = None) ->
     if limit:
         rows = rows[:limit]
     receipts = _receipts(conn, [r["id"] for r in rows])
+    vecs = store.embed([r["description"] for r in rows]) if rows else []
     items = []
-    for r in rows:
+    for r, vec in zip(rows, vecs):
         items.append({
             "id": r["id"], "date": r["date"], "description": r["description"],
             "source": r["source_type"], "account": r["account"],
@@ -216,7 +229,7 @@ def pending_payload(conn, categorizer: Categorizer, limit: int | None = None) ->
             "similar_filed": [
                 {"description": n.example or n.merchant, "category": names[n.category_id],
                  "similarity": round(n.similarity, 2)}
-                for n in store.nearest(r["description"], r["amount"], k=10)],
+                for n in store.nearest(r["description"], r["amount"], k=10, vec=vec)],
         })
         if r["id"] in receipts:
             items[-1]["receipt"] = receipts[r["id"]]
