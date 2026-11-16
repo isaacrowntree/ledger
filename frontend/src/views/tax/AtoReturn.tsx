@@ -211,8 +211,10 @@ function CapitalGains({ cg }: { cg: ATOReturn["capital_gains"] }) {
       ))}
       <div className="table-wrap">
         <table className="ledger">
-          <thead><tr><th>Code</th><th className="num">Units</th><th>Acquired</th><th>Disposed</th><th className="num">Cost base</th>
-            <th className="num">Proceeds</th><th className="num">Gain</th><th>Discount</th></tr></thead>
+          {cg.events.length > 0 ? (
+            <thead><tr><th>Code</th><th className="num">Units</th><th>Acquired</th><th>Disposed</th><th className="num">Cost base</th>
+              <th className="num">Proceeds</th><th className="num">Gain</th><th>Discount</th></tr></thead>
+          ) : <caption className="hint">No disposals this year.</caption>}
           <tbody>
             {cg.events.map((e, i) => (
               <tr key={i}><td>{e.code}</td><td className="num">{e.units}</td><td>{displayDate(e.acquired)}</td><td>{displayDate(e.disposed)}</td>
