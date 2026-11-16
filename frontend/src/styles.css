@@ -779,3 +779,5 @@ table.matrix td:first-child { white-space: nowrap; }
 }
 .confirm-remove { display: inline-flex; gap: 4px; white-space: nowrap; }
 button.danger { color: var(--owe); border-color: currentColor; background: transparent; padding: 2px 8px; min-height: 0; }
+.rail-area li a:has(.rail-count) { display: flex; align-items: center; justify-content: space-between; gap: 4px; white-space: nowrap; }
+.rail-area li a .rail-count { margin-left: 0; flex: none; }
