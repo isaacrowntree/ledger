@@ -2,6 +2,9 @@
 
 Rules:
 - Business:* categories → 100% allocated to matching business
+- income_categories (per business) → 100% allocated; without the key, a
+  single business takes Freelance Income. Other income is never assumed to
+  be business income.
 - (category + tag) matches a split_rule → configured % allocated
 - Results written to transaction_splits table
 """
@@ -15,6 +18,13 @@ import yaml
 def load_tax_config(config_path: Path) -> dict:
     with open(config_path) as f:
         return yaml.safe_load(f)
+
+
+def income_categories(biz: dict, tax_config: dict) -> list[str]:
+    """The income categories that are wholly this business's income."""
+    if "income_categories" in biz:
+        return list(biz["income_categories"] or [])
+    return ["Freelance Income"] if len(tax_config.get("businesses", [])) == 1 else []
 
 
 def compute_splits(
@@ -39,6 +49,10 @@ def compute_splits(
                 "business_name": biz_name,
                 "business_pct": 100.0,
             })
+            break
+
+        if category_name in income_categories(biz, tax_config):
+            splits.append({"business_name": biz_name, "business_pct": 100.0})
             break
 
         # Check split rules (category + tag match)

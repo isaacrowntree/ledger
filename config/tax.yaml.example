@@ -10,6 +10,10 @@ businesses:
   - name: "My Business"
     abn: "00000000000"
     activity: "Your business activity"
+    # Income categories that are wholly this business's income. Without this
+    # key a single business takes Freelance Income; Other Income never counts
+    # unless listed here (or allocated by a split rule with a tag).
+    income_categories: [Freelance Income]
     split_rules:
       # Personal categories that are partially business use
       - category: Utilities

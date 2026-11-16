@@ -21,6 +21,18 @@ Any transaction categorised with a name starting with `Business:` is automatical
 
 No config needed for these -- the split engine detects the `Business:` prefix.
 
+### Business income
+
+Income is allocated the same way, through the split ledger, so a deposit only counts as business income when it's attributed to the business:
+
+```yaml
+businesses:
+  - name: "My Business"
+    income_categories: [Freelance Income]
+```
+
+Without `income_categories`, a single business takes `Freelance Income`. `Other Income` is never assumed to be business income: list it, or tag the rows and add a split rule, if it is.
+
 ### 2. Partial allocation -- Split rules
 
 Personal expenses that are partially business-use require explicit split rules in `config/tax.yaml`:

@@ -62,6 +62,14 @@ categories:
 
   # Financial
   - name: Transfers
+    kind: neutral
+  # Money in that is neither earned nor a refund: family money, gifts.
+  - name: Personal (non-assessable)
+    kind: neutral
+  # An employer paying back what you spent for it (an expense claim). Link the
+  # refund to the purchase when it repays one thing; otherwise file it here.
+  - name: Employer Reimbursements
+    kind: neutral
   - name: Fees & Charges
   - name: Cash Withdrawal
   - name: Investments

@@ -19,7 +19,8 @@ CREATE TABLE IF NOT EXISTS categories (
     name TEXT NOT NULL UNIQUE,
     parent_id INTEGER REFERENCES categories(id),
     is_income INTEGER NOT NULL DEFAULT 0,
-    budget_monthly REAL
+    budget_monthly REAL,
+    kind TEXT NOT NULL DEFAULT 'expense' CHECK (kind IN ('income', 'expense', 'neutral'))
 );
 
 CREATE TABLE IF NOT EXISTS transactions (
@@ -208,6 +209,9 @@ MIGRATIONS = [
     # person whose payments mean different things (house money vs bills). Its
     # rows always file for review so each is looked at; see MerchantStore.
     ("merchant_labels", "mixed", "INTEGER NOT NULL DEFAULT 0"),
+    # Income, expense or neutral (see etl/flows.py). Backfilled from is_income
+    # and the default neutral names when the column is first added.
+    ("categories", "kind", "TEXT NOT NULL DEFAULT 'expense' CHECK (kind IN ('income', 'expense', 'neutral'))"),
 ]
 
 
@@ -217,7 +221,15 @@ def init_db(conn: sqlite3.Connection) -> None:
         cols = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
         if column not in cols:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+            if (table, column) == ("categories", "kind"):
+                _backfill_kinds(conn)
     conn.commit()
+
+
+def _backfill_kinds(conn: sqlite3.Connection) -> None:
+    from etl.flows import default_kind
+    for cid, name, is_income in conn.execute("SELECT id, name, is_income FROM categories").fetchall():
+        conn.execute("UPDATE categories SET kind = ? WHERE id = ?", (default_kind(name, bool(is_income)), cid))
 
 
 def ensure_account(conn: sqlite3.Connection, name: str, source_type: str, currency: str = "AUD", account_type: str = "checking", display: int = 1) -> int:
@@ -232,13 +244,18 @@ def ensure_account(conn: sqlite3.Connection, name: str, source_type: str, curren
     return cursor.lastrowid
 
 
-def ensure_category(conn: sqlite3.Connection, name: str, is_income: bool = False, budget_monthly: Optional[float] = None) -> int:
+def ensure_category(conn: sqlite3.Connection, name: str, is_income: bool = False,
+                    budget_monthly: Optional[float] = None, kind: Optional[str] = None) -> int:
+    from etl.flows import KINDS, default_kind
+    kind = kind or default_kind(name, is_income)
+    if kind not in KINDS:
+        raise ValueError(f"category {name!r}: kind must be one of {', '.join(KINDS)}, not {kind!r}")
     row = conn.execute("SELECT id FROM categories WHERE name = ?", (name,)).fetchone()
     if row:
         return row["id"]
     cursor = conn.execute(
-        "INSERT INTO categories (name, is_income, budget_monthly) VALUES (?, ?, ?)",
-        (name, int(is_income), budget_monthly),
+        "INSERT INTO categories (name, is_income, budget_monthly, kind) VALUES (?, ?, ?, ?)",
+        (name, int(kind == "income"), budget_monthly, kind),
     )
     conn.commit()
     return cursor.lastrowid
@@ -302,13 +319,20 @@ def load_categories_from_config(conn: sqlite3.Connection, config_path: Path) -> 
     import yaml
     with open(config_path) as f:
         config = yaml.safe_load(f)
+    from etl.flows import default_kind
     for cat in config.get("categories", []):
-        ensure_category(
+        cid = ensure_category(
             conn,
             cat["name"],
             is_income=cat.get("is_income", False),
             budget_monthly=cat.get("budget_monthly"),
+            kind=cat.get("kind"),
         )
+        # The config is the source of truth for what a category is.
+        kind = cat.get("kind") or default_kind(cat["name"], cat.get("is_income", False))
+        conn.execute("UPDATE categories SET kind = ?, is_income = ? WHERE id = ?",
+                     (kind, int(kind == "income"), cid))
+    conn.commit()
 
 
 def load_accounts_from_config(conn: sqlite3.Connection, config_path: Path) -> None:
