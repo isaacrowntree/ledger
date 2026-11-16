@@ -140,4 +140,4 @@ def test_reports_count_a_repayment_as_less_spending_not_income(tmp_path, monkeyp
     c.close()
     [month] = server.app.test_client().get("/api/summary/monthly?year=2026").get_json()
     assert month["expenses"] == -200.0     # the dinner, less the friend's share
-    assert month["income"] == 50.0         # only the gift
+    assert month["income"] == 0            # a gift is neither income nor spending (neutral)

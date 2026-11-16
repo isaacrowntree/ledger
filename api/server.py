@@ -10,6 +10,7 @@ from api.schemas import body, sql_value
 
 from etl import db
 from etl.merchant import direction as direction_of, merchant_key
+from etl.flows import EARNED, SPENT
 from etl.merchant_store import MerchantStore, follow_purchases
 from etl.cpi import sync_cpi, get_cpi_for_year, get_cpi_history, get_latest_cpi, adjust_for_inflation
 from etl.dedup import find_duplicates, resolve_duplicates
@@ -327,7 +328,7 @@ def api_update_transaction(txn_id: int):
 def api_categories():
     conn = get_conn()
     rows = conn.execute(
-        "SELECT id, name, is_income, budget_monthly FROM categories ORDER BY name"
+        "SELECT id, name, is_income, kind, budget_monthly FROM categories ORDER BY name"
     ).fetchall()
     conn.close()
     return jsonify([dict(r) for r in rows])
@@ -414,7 +415,7 @@ def api_summary_period():
     date_from = request.args.get("from") or "0000-01-01"
     date_to = request.args.get("to") or "9999-12-31"
     conn = get_conn()
-    rows = conn.execute("""
+    rows = conn.execute(f"""
         SELECT strftime('%Y-%m', t.date) AS month,
                COALESCE(c.name, 'Uncategorized') AS category,
                COALESCE(c.is_income, 0) AS is_income,
@@ -423,7 +424,7 @@ def api_summary_period():
         JOIN accounts a ON a.id = t.account_id
         LEFT JOIN categories c ON c.id = t.category_id
         WHERE t.date BETWEEN ? AND ? AND t.is_transfer = 0
-          AND COALESCE(c.name, '') <> 'Transfers'
+          AND ({EARNED} OR {SPENT})          -- neutral money is neither
         GROUP BY month, category
     """, (date_from, date_to)).fetchall()
 
@@ -488,14 +489,11 @@ def api_summary_period():
     })
 
 
-# What counts as spending and as income in the views below (`t` is transactions).
-SPENT = "(t.amount < 0 OR t.id IN (SELECT deposit_id FROM reimbursements))"
-EARNED = "(t.amount > 0 AND t.id NOT IN (SELECT deposit_id FROM reimbursements))"
-
-# Spending and income views count a repayment from a person (see etl/reimburse.py)
-# as negative spending in the category of what it repaid, not as income: a
-# friend's $60 for a $300 dinner leaves Eating Out at $240. Cash views (the
-# transaction list's totals, transfers, balances) still count money as it moved.
+# Spending and income in the views below use EARNED and SPENT from etl/flows.py:
+# income categories are income, expense categories net their refunds and linked
+# repayments, and neutral categories (transfers, family money, employer
+# reimbursements) are neither. Cash views (the transaction list's totals,
+# balances) still count money as it moved.
 
 @app.route("/api/summary/monthly")
 def api_summary_monthly():
@@ -538,7 +536,7 @@ def api_summary_monthly():
 def api_summary_category():
     conn = get_conn()
     query = """
-        SELECT c.name as category, c.is_income,
+        SELECT c.name as category, c.is_income, COALESCE(c.kind, 'expense') as kind,
                SUM(t.amount) as total,
                COUNT(*) as count
         FROM transactions t
@@ -782,7 +780,7 @@ def api_summary_tax():
 
     # All transactions in the FY, excluding transfers and loans
     rows = conn.execute("""
-        SELECT c.name as category, c.is_income,
+        SELECT c.name as category, c.is_income, COALESCE(c.kind, 'expense') as kind,
                SUM(t.amount) as total,
                COUNT(*) as count
         FROM transactions t
@@ -837,7 +835,7 @@ def api_year_review():
 
     # Category breakdown
     categories = conn.execute("""
-        SELECT c.name as category, c.is_income,
+        SELECT c.name as category, c.is_income, COALESCE(c.kind, 'expense') as kind,
                SUM(t.amount) as total, COUNT(*) as count
         FROM transactions t
         LEFT JOIN categories c ON t.category_id = c.id
@@ -1234,22 +1232,19 @@ def api_ato_return():
     for biz in tax_config.get("businesses", []):
         biz_name = biz["name"]
 
-        # Income (Freelance Income / Other Income tagged as business)
-        biz_income = conn.execute("""
-            SELECT COALESCE(SUM(t.amount), 0) as total
-            FROM transactions t LEFT JOIN categories c ON t.category_id = c.id
-            WHERE t.date >= ? AND t.date <= ? AND t.is_transfer = 0
-              AND (c.name = 'Freelance Income' OR c.name = 'Other Income')
-        """, (fy_start, fy_end)).fetchone()["total"]
-
-        # COGS & expenses from splits (exclude transfer legs — they aren't expenses)
-        biz_expenses = conn.execute("""
-            SELECT COALESCE(SUM(ts.business_amount), 0) as total
+        # Income and expenses both come from the split ledger (etl/splitter.py):
+        # income is what's allocated to this business from its income
+        # categories (tax.yaml `income_categories`) or split rules, never every
+        # deposit that happens to be filed as income.
+        split_totals = conn.execute(f"""
+            SELECT COALESCE(SUM(CASE WHEN {EARNED} THEN ts.business_amount END), 0) AS income,
+                   COALESCE(SUM(CASE WHEN {SPENT} THEN ts.business_amount END), 0) AS expenses
             FROM transaction_splits ts
             JOIN transactions t ON t.id = ts.transaction_id
             WHERE t.date >= ? AND t.date <= ? AND ts.business_name = ?
               AND t.is_transfer = 0
-        """, (fy_start, fy_end, biz_name)).fetchone()["total"]
+        """, (fy_start, fy_end, biz_name)).fetchone()
+        biz_income, biz_expenses = split_totals["income"], split_totals["expenses"]
 
         # Depreciation: figures written into tax.yaml win (they match lodged
         # returns); for any other year, the asset register's decline in value.

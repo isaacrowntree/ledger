@@ -41,7 +41,7 @@ NOT_PEOPLE = ("MCARE", "MEDICARE", "BUPA", "MEDIBANK", "NIB ", "HCF", "INSURANCE
 SHARES = (1, 2, 3, 4, 5, 6)
 CONFIDENCE = 0.85
 # Repayments are not looked for against these: they are not purchases.
-NOT_PURCHASES = ("Transfers", "Personal (non-assessable)", "Mortgage", "Tax", "Investments",
+NOT_PURCHASES = ("Transfers", "Personal (non-assessable)", "Employer Reimbursements", "Mortgage", "Tax", "Investments",
                  "Uncategorized")
 
 

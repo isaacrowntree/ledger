@@ -97,6 +97,8 @@ export interface Category {
   id: number;
   name: string;
   is_income: number;
+  /** income, expense or neutral (neither: transfers, family money, employer reimbursements). */
+  kind: "income" | "expense" | "neutral";
   budget_monthly: number | null;
 }
 
