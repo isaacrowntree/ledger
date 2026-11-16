@@ -5,7 +5,6 @@ from pathlib import Path
 
 from etl import db
 from etl.categorizer import CONFIDENCE, Categorizer
-from etl.merchant_store import load_vec
 from etl.models import RawTransaction
 
 
@@ -21,7 +20,7 @@ LLM_REVIEW_CONFIDENCE = 0.5
 
 
 def run(config_path: Path, seed=False, rerun=False, evaluate=None, stats=False, dry_run=False,
-        export=None, import_=None):
+        export=None, import_=None, llm=False, setup=False, model=None, limit=None, guide=None):
     conn = db.get_connection()
     db.init_db(conn)
     db.load_categories_from_config(conn, config_path)
@@ -41,13 +40,19 @@ def run(config_path: Path, seed=False, rerun=False, evaluate=None, stats=False, 
         _export(conn, categorizer, Path(export))
     elif import_:
         _import(conn, categorizer, Path(import_), dry_run)
+    elif llm:
+        from etl.llm_file import DEFAULT_MODEL, file_with_claude
+        file_with_claude(conn, categorizer, model=model or DEFAULT_MODEL, limit=limit, dry_run=dry_run,
+                         guide=Path(guide) if guide else config_path.parent / "categorising-guide.md")
+    elif setup:
+        _setup(conn, categorizer, config_path)
     conn.close()
 
 
 def _format_stats(s: dict) -> str:
     return (f"{s['labels']} merchants labelled ({s.get('human', 0)} by you, {s.get('llm', 0)} by Claude, "
             f"{s.get('seed', 0)} from config, {s.get('bootstrap', 0)} from the existing ledger); "
-            f"{s['indexed_rows']} transactions indexed with {s['embedder']}")
+            f"{s['indexed_rows']} transactions indexed with {s['embedder']} ({s['backend']})")
 
 
 def _names(conn) -> dict[int, str]:
@@ -99,7 +104,6 @@ def _evaluate(conn: sqlite3.Connection, config_path: Path, cutoff: str) -> None:
     mem = sqlite3.connect(":memory:")
     mem.row_factory = sqlite3.Row
     conn.backup(mem)
-    load_vec(mem)
     mem.execute("DROP TABLE IF EXISTS category_rules_learned")  # corrections may postdate the cutoff
     mem.execute("DELETE FROM merchant_labels")
     mem.execute("DELETE FROM merchant_index_meta")  # forces a fresh, empty vector index
@@ -169,24 +173,39 @@ def _evaluate(conn: sqlite3.Connection, config_path: Path, cutoff: str) -> None:
             print(f"    {k:5d}  {want} -> {got}")
 
 
-def _export(conn, categorizer: Categorizer, path: Path) -> None:
-    """Write the rows the categoriser could not settle, with context for Claude to file them.
+INSTRUCTIONS = (
+    "File each item under exactly one of `categories`. similar_filed shows how this person "
+    "filed the most similar merchants; category_examples shows what each category holds; "
+    "receipt, when present, lists what was bought. "
+    "Answer as {\"<id>\": {\"category\": ..., \"bucket\": \"sure\"|\"likely\"|\"unsure\", "
+    "\"alternative\": optional category, \"note\": optional, <= 12 words}}. "
+    "sure: the merchant type is unambiguous; the row is filed and the merchant learned for good. "
+    "likely: probably right; filed and flagged for review. "
+    "unsure: you can't tell what was bought or why, or the same merchant can mean different "
+    "things on different rows; filed under your best guess and sent to the owner with the "
+    "alternative and note. Use unsure for anything tax-relevant you are not sure of.")
 
-    Pending means Uncategorized, or a guess from the neighbours that nobody
-    confirmed. Each row carries the ten most similar merchants already filed
-    (with one description as the bank printed it), and each category carries a
-    few merchants filed under it, so the person's own conventions are visible.
+
+def pending_payload(conn, categorizer: Categorizer, limit: int | None = None) -> dict:
+    """The rows the categoriser could not settle, with context for an LLM to file them.
+
+    Pending: Uncategorized, a guess from the neighbours nobody confirmed, or a
+    row from a mixed merchant nobody has looked at. Each row carries the ten
+    most similar merchants already filed (with a description as the bank printed
+    it) and its receipt items when `ledger receipts` found one; each category
+    carries a few merchants filed under it, so the owner's conventions show.
     """
-    import json
     names = _names(conn)
     store = categorizer.store
     rows = conn.execute(
         """SELECT t.id, t.date, t.description, t.amount, t.source_type, a.name AS account, c.name AS category
            FROM transactions t JOIN categories c ON c.id = t.category_id
            LEFT JOIN accounts a ON a.id = t.account_id
-           WHERE COALESCE(t.category_confidence, 0) < 1
-             AND (c.name = 'Uncategorized' OR t.category_confidence <= ?)
-           ORDER BY t.date""", (CONFIDENCE["nearest"],)).fetchall()
+           WHERE c.name = 'Uncategorized' OR t.category_confidence IN (?, ?)
+           ORDER BY t.date""", (CONFIDENCE["nearest"], CONFIDENCE["mixed"])).fetchall()
+    if limit:
+        rows = rows[:limit]
+    receipts = _receipts(conn, [r["id"] for r in rows])
     items = []
     for r in rows:
         items.append({
@@ -199,6 +218,8 @@ def _export(conn, categorizer: Categorizer, path: Path) -> None:
                  "similarity": round(n.similarity, 2)}
                 for n in store.nearest(r["description"], r["amount"], k=10)],
         })
+        if r["id"] in receipts:
+            items[-1]["receipt"] = receipts[r["id"]]
     examples = {}
     for cat_id, name in sorted(names.items(), key=lambda kv: kv[1]):
         if name == "Uncategorized":
@@ -208,28 +229,39 @@ def _export(conn, categorizer: Categorizer, path: Path) -> None:
                ORDER BY CASE origin WHEN 'human' THEN 0 WHEN 'seed' THEN 1 ELSE 2 END, times_seen DESC
                LIMIT 6""", (cat_id,)).fetchall()
         examples[name] = [e[0] for e in ex]
-    path.write_text(json.dumps({
-        "instructions": (
-            "File each item under exactly one of `categories`. similar_filed shows how this person "
-            "filed the most similar merchants; category_examples shows what each category holds. "
-            "Answer as {\"<id>\": {\"category\": ..., \"bucket\": \"sure\"|\"likely\"|\"unsure\", "
-            "\"alternative\": optional category, \"note\": optional, <= 12 words}}. "
-            "sure: the merchant type is unambiguous; the row is filed and the merchant learned for good. "
-            "likely: probably right; filed and flagged for review. "
-            "unsure: you can't tell what was bought or why, or the same merchant can mean different "
-            "things on different rows; filed under your best guess and sent to the owner with the "
-            "alternative and note. Use unsure for anything tax-relevant you are not sure of."),
-        "categories": [n for n in sorted(names.values()) if n != "Uncategorized"],
-        "category_examples": examples,
-        "items": items,
-    }, indent=1))
-    print(f"Exported {len(items)} pending rows to {path}")
+    return {"instructions": INSTRUCTIONS,
+            "categories": [n for n in sorted(names.values()) if n != "Uncategorized"],
+            "category_examples": examples, "items": items}
+
+
+def _receipts(conn, ids: list[int]) -> dict[int, dict]:
+    """Receipt details `ledger receipts` matched to these rows, by transaction id."""
+    if not ids or not conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'receipts'").fetchone():
+        return {}
+    out = {}
+    for start in range(0, len(ids), 500):
+        chunk = ids[start:start + 500]
+        for r in conn.execute(f"SELECT transaction_id, subject, items FROM receipts "
+                              f"WHERE transaction_id IN ({','.join('?' * len(chunk))})", chunk):
+            out[r[0]] = {"subject": r[1], "items": r[2].split("\n") if r[2] else []}
+    return out
+
+
+def _export(conn, categorizer: Categorizer, path: Path) -> None:
+    import json
+    payload = pending_payload(conn, categorizer)
+    path.write_text(json.dumps(payload, indent=1))
+    print(f"Exported {len(payload['items'])} pending rows to {path}")
 
 
 def _import(conn, categorizer: Categorizer, path: Path, dry_run: bool) -> None:
-    """File Claude's answers by bucket (see BUCKETS)."""
     import json
-    answers = json.loads(path.read_text())
+    import_answers(conn, categorizer, json.loads(path.read_text()), dry_run)
+
+
+def import_answers(conn, categorizer: Categorizer, answers: dict, dry_run: bool) -> dict:
+    """File answers by bucket (see BUCKETS). Returns the count per bucket and skipped."""
     ids = {name: cat_id for cat_id, name in _names(conn).items()}
     transfers = ids.get("Transfers")
     bad = {k: v.get("category") for k, v in answers.items() if v.get("category") not in ids}
@@ -272,3 +304,26 @@ def _import(conn, categorizer: Categorizer, path: Path, dry_run: bool) -> None:
     print(f"{counts['sure']} filed and learned, {counts['likely']} filed for review, "
           f"{counts['unsure']} sent to Merchants to check, {skipped} skipped"
           + (" (dry run, nothing written)" if dry_run else ""))
+    return {**counts, "skipped": skipped}
+
+
+def _setup(conn, categorizer: Categorizer, config_path: Path) -> None:
+    """First run: learn from the categories already in the ledger and show where things stand."""
+    store = categorizer.store
+    n = store.seed_from_transactions()
+    print(f"Labelled {n} merchants from the categories already in your ledger.")
+    print(_format_stats(store.stats()))
+    if store.stats()["backend"] == "numpy" or store.embedder.name.startswith("ngram"):
+        print('Tip: pip install -e ".[vectors]" for local embeddings and the sqlite-vec index '
+              "(better guesses for merchants seen for the first time).")
+    pending = len(pending_payload(conn, categorizer)["items"])
+    last = conn.execute("SELECT MAX(date) FROM transactions").fetchone()[0]
+    print(f"\n{pending} rows still need a category.")
+    if last:
+        from datetime import date, timedelta
+        cutoff = (date.fromisoformat(last) - timedelta(days=90)).isoformat()
+        print(f"To see how well it does on your data:  ledger categorise --evaluate {cutoff}")
+    print("To file the rest:")
+    print("  dashboard      python -m api, then Transactions (suggestion chips) and Merchants to check")
+    print("  Claude API     ledger categorise --llm --dry-run, then without --dry-run")
+    print("  any LLM        ledger categorise --export pending.json, file it, --import answers.json")

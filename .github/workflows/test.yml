@@ -23,8 +23,12 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev]" 2>/dev/null || pip install -e .
-          pip install pytest
+          pip install -e ".[dev,vectors]"
 
       - name: Run tests
         run: python -m pytest tests/ -v
+
+      - name: Run the categoriser tests on the NumPy fallback index
+        env:
+          LEDGER_VECTOR_BACKEND: numpy
+        run: python -m pytest tests/test_vector_index.py tests/test_categorizer.py tests/test_categorise_cmd.py tests/test_reimburse.py -v

@@ -128,6 +128,9 @@ ledger dedup
 Label merchants, recategorise rows, and measure how well the categoriser does. Pick one mode per run.
 
 ```sh
+# First run: --seed plus indexing, then what is left and how to measure it
+ledger categorise --setup
+
 # Label every merchant from the categories already in the ledger (origin "bootstrap")
 ledger categorise --seed
 
@@ -146,7 +149,13 @@ ledger categorise --evaluate 2025-07-01
 ledger categorise --export pending.json
 ledger categorise --import answers.json --dry-run
 ledger categorise --import answers.json
+
+# Or let the Claude API do it (needs the `llm` extra; sends the rows to Anthropic)
+ledger categorise --llm --dry-run
+ledger categorise --llm --limit 200 --model claude-opus-5-5
 ```
+
+**`--llm`.** Sends the pending rows in batches of 40 with the same context as `--export` (similar merchants, category examples, receipt items) plus `config/categorising-guide.md` if present (or `--guide FILE`). Answers come back as structured output restricted to your category names and the three buckets, and are filed exactly like `--import`. A batch the model declines or cuts off stays pending. Uses `claude-opus-5-5` by default with server-side fallbacks for safety declines; credentials from `ANTHROPIC_API_KEY` or an `ant auth login` profile.
 
 Run `--seed` once after upgrading from the old regex rules, so the merchants already in your ledger are labelled before new statements arrive.
 
@@ -203,3 +212,20 @@ ledger reimbursements --import answers.json   # {"<deposit id>": <purchase id or
 - Never matched: the same payer sending the same amount three or more times (rent or board on a schedule), refunds from Medicare or insurers.
 - Purchases in Business, Rental, Strata or Mortgage categories are never linked automatically: a repayment there changes a deduction.
 - Ambiguous ones are exported with their candidate purchases for Claude to decide.
+
+
+## `ledger receipts`
+
+Matches purchases to their email receipts and keeps what was bought, read through the [himalaya](https://github.com/pimalaya/himalaya) CLI so any account it can reach works. Configure the accounts in `config/receipts.yaml` (copy the `.example`).
+
+```sh
+ledger receipts --dry-run              # count matches
+ledger receipts                        # store them
+ledger receipts --since 2024-07-01 --all
+```
+
+- **PayPal rows** are matched by the receipt's transaction id.
+- **Everything else**: emails from a sender sharing a word with the merchant (AMAZON and amazon.com.au), dated from 10 days before to 3 days after, whose text contains the exact amount. One search per merchant word, so it stays quick.
+- By default only purchases where the item could change the answer are looked for (not yet settled, mixed merchants, business and electronics categories); `--all` looks for every purchase.
+
+The items are kept in the `receipts` table and go with each row to `ledger categorise --export` and `--llm`. Nothing is sent anywhere by this command.

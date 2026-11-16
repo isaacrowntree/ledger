@@ -60,8 +60,9 @@ CREATE TABLE IF NOT EXISTS currency_rates (
 );
 
 -- One row per merchant (see etl/merchant.py): the category it is filed under.
--- The vector index over these rows (merchant_vectors) is a sqlite-vec table
--- created by etl/merchant_store.py, because its width depends on the embedder.
+-- The vector index over these rows is created by etl/vector_index.py (sqlite-vec
+-- tables, or a plain BLOB table for the NumPy fallback), because its width
+-- depends on the embedder.
 CREATE TABLE IF NOT EXISTS merchant_labels (
     id INTEGER PRIMARY KEY,
     merchant TEXT NOT NULL,

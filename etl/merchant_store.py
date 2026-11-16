@@ -1,13 +1,13 @@
 """What category each merchant belongs to, and a vector index to guess new ones.
 
 `merchant_labels` holds one row per (merchant key, direction): the category it
-is filed under and where that came from. Two sqlite-vec indexes in the same
-SQLite file let a merchant seen for the first time borrow the category of what
-it most resembles:
+is filed under and where that came from. Two vector collections (sqlite-vec, or
+NumPy when the extension can't load; see etl/vector_index.py) let a merchant
+seen for the first time borrow the category of what it most resembles:
 
-- merchant_vectors: each labelled merchant, embedded from a description as the
+- "merchant": each labelled merchant, embedded from a description as the
   bank printed it (its `example`), so merchants from the config count too.
-- transaction_vectors: every settled transaction's raw description. Raw text,
+- "txn": every settled transaction's raw description. Raw text,
   noise included, ranked neighbours better than cleaned keys in trials on the
   real ledger. Only rows whose category is trusted (confidence >= 0.85, so
   never a guess from this index) take part, so guesses do not feed guesses.
@@ -23,10 +23,9 @@ import sqlite3
 from collections import Counter
 from dataclasses import dataclass
 
-import sqlite_vec
-
 from etl.embedding import Embedder, default_embedder
 from etl.merchant import direction as direction_of, merchant_key
+from etl.vector_index import open_index
 
 # Rows at or above this confidence are trusted as neighbours: confirmed, labelled
 # or confidently filed by Claude, never a guess from the index itself (0.6).
@@ -50,23 +49,11 @@ class Suggestion:
     similarity: float     # cosine similarity of the closest neighbour in this category
 
 
-def load_vec(conn: sqlite3.Connection) -> None:
-    """Load sqlite-vec into this connection (harmless if already loaded)."""
-    try:
-        conn.execute("SELECT vec_version()")
-        return
-    except sqlite3.OperationalError:
-        pass
-    conn.enable_load_extension(True)
-    sqlite_vec.load(conn)
-    conn.enable_load_extension(False)
-
-
 class MerchantStore:
     def __init__(self, conn: sqlite3.Connection, embedder: Embedder | None = None):
         self.conn = conn
         self.embedder = embedder or default_embedder()
-        load_vec(conn)
+        self.index = open_index(conn, self.embedder.dim)
         self._ensure_index()
         self._import_legacy_learned_rules()
 
@@ -77,43 +64,33 @@ class MerchantStore:
         return row[0] if row else None
 
     def _ensure_index(self) -> None:
-        """Create the vector tables, or rebuild them if the embedder changed."""
-        if self._meta("embedder") == self.embedder.name:
+        """Create the vector index, or rebuild it if the embedder or backend changed."""
+        fingerprint = f"{self.embedder.name}|{self.index.backend}"
+        if self._meta("embedder") == fingerprint:
             return
-        dim = self.embedder.dim
-        for table, key in (("merchant_vectors", "label_id"), ("transaction_vectors", "txn_id")):
-            self.conn.execute(f"DROP TABLE IF EXISTS {table}")
-            self.conn.execute(
-                f"CREATE VIRTUAL TABLE {table} USING vec0({key} INTEGER PRIMARY KEY, "
-                f"embedding float[{dim}] distance_metric=cosine, direction TEXT)")
+        self.index.reset()
         self.conn.execute(
             "INSERT OR REPLACE INTO merchant_index_meta (key, value) VALUES ('embedder', ?)",
-            (self.embedder.name,))
+            (fingerprint,))
         self._index(self.conn.execute(
             "SELECT id, COALESCE(example, merchant), direction FROM merchant_labels").fetchall())
         self.conn.commit()
 
     def _index(self, rows) -> None:
         """Embed and (re)insert labels, given rows of (id, text, direction)."""
-        self._embed_into("merchant_vectors", "label_id", rows)
+        self._embed_into("merchant", rows)
 
-    def _embed_into(self, table: str, key: str, rows) -> None:
+    def _embed_into(self, collection: str, rows) -> None:
         rows = list(rows)
         for start in range(0, len(rows), 1024):
             chunk = rows[start:start + 1024]
             vecs = self.embedder.embed([r[1].upper() for r in chunk])
-            self.conn.executemany(f"DELETE FROM {table} WHERE {key} = ?", [(r[0],) for r in chunk])
-            self.conn.executemany(
-                f"INSERT INTO {table} ({key}, embedding, direction) VALUES (?, ?, ?)",
-                [(r[0], v.tobytes(), r[2]) for r, v in zip(chunk, vecs)])
+            self.index.upsert(collection, [(r[0], v, r[2]) for r, v in zip(chunk, vecs)])
 
     def sync_transactions(self) -> int:
         """Embed ledger rows that are not in the index yet. Returns how many."""
-        rows = self.conn.execute(
-            """SELECT t.id, t.description, CASE WHEN t.amount > 0 THEN 'in' ELSE 'out' END
-               FROM transactions t
-               WHERE NOT EXISTS (SELECT 1 FROM transaction_vectors v WHERE v.txn_id = t.id)""").fetchall()
-        self._embed_into("transaction_vectors", "txn_id", rows)
+        rows = self.index.missing_txns()
+        self._embed_into("txn", rows)
         self.conn.commit()
         return len(rows)
 
@@ -208,7 +185,7 @@ class MerchantStore:
             (merchant_key(description), direction_of(amount))).fetchone()
         if not row:
             return False
-        self.conn.execute("DELETE FROM merchant_vectors WHERE label_id = ?", (row[0],))
+        self.index.delete("merchant", [row[0]])
         self.conn.execute("DELETE FROM merchant_labels WHERE id = ?", (row[0],))
         self.conn.commit()
         return True
@@ -250,16 +227,13 @@ class MerchantStore:
 
     # --- reads -------------------------------------------------------------
 
-    def lookup(self, description: str, amount: float) -> tuple[int, str, bool] | None:
-        """(category_id, origin, needs_review) when this exact merchant is labelled.
-
-        A mixed merchant reports needs_review, so its rows always come up for a look.
-        """
+    def lookup(self, description: str, amount: float) -> tuple[int, str, bool, bool] | None:
+        """(category_id, origin, needs_review, mixed) when this exact merchant is labelled."""
         row = self.conn.execute(
             "SELECT category_id, origin, needs_review, mixed FROM merchant_labels "
             "WHERE merchant = ? AND direction = ?",
             (merchant_key(description), direction_of(amount))).fetchone()
-        return (row[0], row[1], bool(row[2] or row[3])) if row else None
+        return (row[0], row[1], bool(row[2]), bool(row[3])) if row else None
 
     def set_mixed(self, key: str, direction: str, default_category_id: int, note: str,
                   commit: bool = True) -> None:
@@ -276,26 +250,34 @@ class MerchantStore:
 
     def nearest(self, description: str, amount: float, k: int = 10,
                 exclude_txn: int | None = None) -> list[Neighbour]:
-        """The k most similar labelled merchants and settled transactions, same direction."""
+        """The k most similar labelled merchants and settled transactions, same direction.
+
+        Labels awaiting a decision or marked mixed are not neighbours, and neither
+        are ledger rows whose category isn't trusted (a guess from this index).
+        """
         if not merchant_key(description):
             return []
-        vec = self.embedder.embed([description.upper()])[0].tobytes()
+        vec = self.embedder.embed([description.upper()])[0]
         d = direction_of(amount)
-        found = [Neighbour(r[0], r[1], 1.0 - r[2], r[3]) for r in self.conn.execute(
-            """SELECT l.merchant, l.category_id, v.distance, l.example
-               FROM merchant_vectors v JOIN merchant_labels l ON l.id = v.label_id
-               WHERE v.embedding MATCH ? AND k = ? AND v.direction = ?
-                 AND l.needs_review = 0""", (vec, k, d))]
+        found = []
+        hits = dict(self.index.search("merchant", vec, d, k * 2))
+        if hits:
+            q = ",".join("?" * len(hits))
+            for r in self.conn.execute(
+                    f"SELECT id, merchant, category_id, example FROM merchant_labels "
+                    f"WHERE id IN ({q}) AND needs_review = 0 AND mixed = 0", list(hits)):
+                found.append(Neighbour(r[1], r[2], 1.0 - hits[r[0]], r[3]))
         # Ask for more than k: untrusted rows are dropped after the search.
-        for r in self.conn.execute(
-                f"""SELECT t.id, t.description, t.category_id, v.distance
-                    FROM transaction_vectors v JOIN transactions t ON t.id = v.txn_id
-                    JOIN categories c ON c.id = t.category_id
-                    WHERE v.embedding MATCH ? AND k = ? AND v.direction = ?
-                      AND t.category_confidence >= {TRUSTED_CONFIDENCE} AND c.name != 'Uncategorized'""",
-                (vec, k * 4, d)):
-            if r[0] != exclude_txn:
-                found.append(Neighbour(merchant_key(r[1]), r[2], 1.0 - r[3], r[1]))
+        hits = dict(self.index.search("txn", vec, d, k * 4))
+        hits.pop(exclude_txn, None)
+        if hits:
+            q = ",".join("?" * len(hits))
+            for r in self.conn.execute(
+                    f"""SELECT t.id, t.description, t.category_id FROM transactions t
+                        JOIN categories c ON c.id = t.category_id
+                        WHERE t.id IN ({q}) AND t.category_confidence >= {TRUSTED_CONFIDENCE}
+                          AND c.name != 'Uncategorized'""", list(hits)):
+                found.append(Neighbour(merchant_key(r[1]), r[2], 1.0 - hits[r[0]], r[1]))
         found.sort(key=lambda n: -n.similarity)
         return found[:k]
 
@@ -315,6 +297,5 @@ class MerchantStore:
     def stats(self) -> dict:
         by_origin = dict(self.conn.execute(
             "SELECT origin, COUNT(*) FROM merchant_labels GROUP BY origin").fetchall())
-        rows = self.conn.execute("SELECT COUNT(*) FROM transaction_vectors").fetchone()[0]
-        return {"embedder": self.embedder.name, "labels": sum(by_origin.values()),
-                "indexed_rows": rows, **by_origin}
+        return {"embedder": self.embedder.name, "backend": self.index.backend,
+                "labels": sum(by_origin.values()), "indexed_rows": self.index.count("txn"), **by_origin}

@@ -1,0 +1,12 @@
+# `ledger receipts`: where to look for email receipts. Each entry is an account
+# configured in himalaya (https://github.com/pimalaya/himalaya); check with
+# `himalaya account list`. For Gmail, search "[Gmail]/All Mail" so archived
+# receipts are found too.
+accounts:
+  - name: personal
+    mailbox: "[Gmail]/All Mail"
+# - name: work
+#   mailbox: INBOX
+
+# Only look for receipts of purchases from this date (default: the last year).
+since: 2024-07-01

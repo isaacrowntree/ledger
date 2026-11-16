@@ -25,7 +25,7 @@ from etl.models import RawTransaction
 # Confidence written to transactions.category_confidence. 1.0 is reserved for
 # rows a person confirmed, so the "needs review" flag keeps working.
 CONFIDENCE = {"source": 0.95, "human": 0.95, "seed": 0.9, "llm": 0.85, "bootstrap": 0.9,
-              "nearest": 0.6, "review": 0.5}
+              "nearest": 0.6, "mixed": 0.55, "review": 0.5}
 
 # A guess from the neighbours is used only when the closest one is at least the
 # embedder's min_similarity and this share of the weighted vote agrees. Tuned
@@ -52,6 +52,8 @@ class Categorizer:
 
         hit = self.store.lookup(txn.description, txn.amount)
         if hit:
+            if hit[3]:      # mixed merchant: each row needs its own look
+                return hit[0], CONFIDENCE["mixed"]
             # A merchant waiting for the owner's decision files at review confidence.
             return hit[0], (CONFIDENCE["review"] if hit[2] else CONFIDENCE[hit[1]])
 

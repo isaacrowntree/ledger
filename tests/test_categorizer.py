@@ -181,7 +181,7 @@ class TestIndexLifecycle:
     def test_changing_embedder_rebuilds_the_index(self, conn, categorizer):
         labels = conn.execute("SELECT COUNT(*) FROM merchant_labels").fetchone()[0]
         store = MerchantStore(conn, NgramEmbedder(dim=256))
-        assert conn.execute("SELECT COUNT(*) FROM merchant_vectors").fetchone()[0] == labels
+        assert store.index.count("merchant") == labels
         assert store.suggest("WOOLWORTH", -10.0)
 
     def test_old_exact_description_rules_are_carried_over(self, conn):
@@ -206,7 +206,7 @@ class TestMixedMerchants:
         store = categorizer.store
         store.set_mixed("EXAMPLE MARKETPLACE", "out", db.get_category_id(conn, "Shopping"), "mixed")
         name, conf = _cat(conn, categorizer, "EXAMPLE MARKETPLACE")
-        assert (name, conf) == ("Shopping", CONFIDENCE["review"])
+        assert (name, conf) == ("Shopping", CONFIDENCE["mixed"])
 
     def test_filing_one_row_never_relabels_a_mixed_merchant(self, conn, categorizer):
         store = categorizer.store

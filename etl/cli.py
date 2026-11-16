@@ -168,8 +168,23 @@ def main():
     cat_mode.add_argument("--export", metavar="FILE",
                           help="Write pending rows, with similar filed merchants, as JSON for Claude to file")
     cat_mode.add_argument("--import", dest="import_", metavar="FILE",
-                          help="File Claude's answers ({id: {category, confidence}})")
+                          help="File answers ({id: {category, bucket, alternative, note}})")
+    cat_mode.add_argument("--llm", action="store_true",
+                          help="File pending rows with the Claude API (sends their details to Anthropic)")
+    cat_mode.add_argument("--setup", action="store_true",
+                          help="First run: label merchants from your existing categories and index the ledger")
+    cat_parser.add_argument("--model", default=None, help="With --llm: the Claude model to use")
+    cat_parser.add_argument("--limit", type=int, default=None, help="With --llm: at most this many rows")
+    cat_parser.add_argument("--guide", default=None,
+                            help="With --llm: a file of your filing conventions (default config/categorising-guide.md)")
     cat_parser.add_argument("--dry-run", action="store_true", help="With --rerun or --import: show changes without writing")
+
+    rcpt_parser = sub.add_parser(
+        "receipts", help="Match purchases to their email receipts (via himalaya) and keep the items")
+    rcpt_parser.add_argument("--since", metavar="YYYY-MM-DD", help="Only purchases from this date")
+    rcpt_parser.add_argument("--all", dest="everything", action="store_true",
+                             help="Every purchase, not just the ones where the item could change the category")
+    rcpt_parser.add_argument("--dry-run", action="store_true", help="Count matches without writing")
 
     reimb_parser = sub.add_parser(
         "reimbursements", help="Link deposits from people to the purchases they pay back")
@@ -214,7 +229,12 @@ def main():
         from etl.categorise_cmd import run as cmd_categorise
         cmd_categorise(CONFIG_DIR / "categories.yaml", seed=args.seed, rerun=args.rerun,
                        evaluate=args.evaluate, stats=args.stats, dry_run=args.dry_run,
-                       export=args.export, import_=args.import_)
+                       export=args.export, import_=args.import_, llm=args.llm, setup=args.setup,
+                       model=args.model, limit=args.limit, guide=args.guide)
+    elif args.command == "receipts":
+        from etl.receipts import run as cmd_receipts
+        cmd_receipts(CONFIG_DIR / "receipts.yaml", since=args.since, everything=args.everything,
+                     dry_run=args.dry_run)
     elif args.command == "reimbursements":
         from etl.reimburse import run as cmd_reimbursements
         cmd_reimbursements(export=args.export, import_=args.import_, dry_run=args.dry_run)

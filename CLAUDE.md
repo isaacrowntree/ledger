@@ -35,6 +35,8 @@ Never commit straight to `main`. For every change:
 
 - Tests:
   `uv run --no-project --with pyyaml --with pdfplumber --with flask --with flask-cors --with python-dotenv --with pydantic --with numpy --with sqlite-vec --with fastembed --with pytest python -m pytest -q`
+  (also run the categoriser suites with `LEDGER_VECTOR_BACKEND=numpy` and without
+  `--with sqlite-vec`, as CI does: the NumPy fallback must keep working)
   (takes a few minutes). Dependencies are listed in `pyproject.toml`.
 - API and dashboard: the same `uv run ...` without pytest, then `python -m api`.
   It serves on http://127.0.0.1:5050. Use 127.0.0.1, because `localhost` can

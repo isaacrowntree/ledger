@@ -31,7 +31,8 @@ A personal finance tool that ingests bank statements from multiple Australian ba
 git clone https://github.com/isaacrowntree/ledger.git
 cd ledger
 python3 -m venv .venv && source .venv/bin/activate
-pip install -e .
+pip install -e ".[vectors]"        # or plain -e . : n-gram + NumPy fallback
+# optional: pip install -e ".[llm]" for `ledger categorise --llm`
 
 # Copy and customise config
 cp config/accounts.yaml.example config/accounts.yaml
@@ -180,12 +181,15 @@ ledger reconcile --since 2026-01-01 --account Bankwest
 ledger ingest --force            # Ingest even if a statement fails validation
 ledger dedup                     # Find and resolve cross-account duplicates
 ledger tag --pattern "UBER" --tag transport   # Bulk tag/recategorise by description
+ledger categorise --setup        # First run: label merchants from existing categories, show next steps
 ledger categorise --seed         # Label every merchant from the categories already in the ledger
 ledger categorise --rerun --dry-run   # Recategorise unconfirmed rows (drop --dry-run to write)
 ledger categorise --evaluate 2025-07-01   # Score the categoriser on rows from a date
 ledger categorise --stats        # Labelled merchants by origin
 ledger categorise --export pending.json   # Pending rows + similar merchants, for Claude
 ledger categorise --import answers.json   # File Claude's answers
+ledger categorise --llm --dry-run   # File pending rows with the Claude API (needs the llm extra)
+ledger receipts                 # Match purchases to email receipts (himalaya) and keep the items
 ledger reimbursements           # Link repayments from people to what they repaid
 ```
 
@@ -279,7 +283,11 @@ etl/                 # Extract-Transform-Load pipeline
   merchant.py        # Normalised merchant key (strips receipt numbers, dates, suburbs)
   merchant_store.py  # Merchant labels and the sqlite-vec similarity index
   embedding.py       # Local embeddings (bge-small, or bge-base, via fastembed; n-gram fallback)
-  categorise_cmd.py  # `ledger categorise`: seed, rerun, evaluate, export/import
+  categorise_cmd.py  # `ledger categorise`: setup, seed, rerun, evaluate, export/import
+  llm_file.py        # `ledger categorise --llm`: Claude files pending rows by bucket
+  vector_index.py    # sqlite-vec index, or NumPy brute force when it can't load
+  receipts.py        # `ledger receipts`: email receipts via himalaya
+  mailtext.py        # Plain text from HTML emails
   tagger.py          # Multi-tag assignment
   splitter.py        # Business expense split engine
   normalizer.py      # Dedup, source-of-truth, insert pipeline

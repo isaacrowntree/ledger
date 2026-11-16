@@ -100,7 +100,30 @@ Open [http://localhost:5050](http://localhost:5050) in your browser. You will se
 - **Spreadsheet** -- financial year view with outgoing/incoming/rental tabs
 - **Tax** -- ATO return view with structured sections
 
-## 8. Fix uncategorized transactions
+## 8. Categorising: start here
+
+Install the extras for the best results (local embeddings and the sqlite-vec index; without them the categoriser falls back to character n-grams and a NumPy index and still works):
+
+```sh
+pip install -e ".[vectors]"
+```
+
+Then run the first-time setup. It labels every merchant from the categories already in your ledger (if you have any), indexes the ledger, and tells you what is left and how to measure it:
+
+```sh
+ledger categorise --setup
+ledger categorise --evaluate 2025-07-01   # optional: how well it does on your data
+```
+
+Each new statement is then filed by known merchants first, then by the most similar ones you have filed. What is left over can be filed three ways:
+
+- **Dashboard:** suggestion chips on uncategorised rows, and "Merchants to check" for the calls only you can make.
+- **Claude API:** `pip install -e ".[llm]"`, then `ledger categorise --llm --dry-run` and without `--dry-run`. This sends the pending rows' descriptions, dates and amounts to Anthropic. Put your own conventions ("cafés are Coffee") in `config/categorising-guide.md` and they are sent with every batch.
+- **Any LLM, by hand:** `ledger categorise --export pending.json`, file it, `ledger categorise --import answers.json`.
+
+**Receipts make the long tail much easier.** If you read your email with [himalaya](https://github.com/pimalaya/himalaya), copy `config/receipts.yaml.example` to `config/receipts.yaml` and run `ledger receipts`. It matches purchases to their email receipts (PayPal by transaction id, everything else by sender and exact amount) and keeps what was bought, which then goes with each row to `--export` and `--llm`. A $30 Amazon charge is filed as the tyre inflator it was.
+
+## 9. Fix uncategorized transactions
 
 In the Transactions view, filter by category "Uncategorized". Each row shows suggestion chips from the most similar merchants you have filed; click one, or change the category yourself. Either way the merchant is labelled, so its later transactions are filed the same way, and the dashboard offers to move its other rows too.
 
@@ -111,7 +134,7 @@ ledger categorise --seed
 ledger categorise --rerun
 ```
 
-For a large backlog, `ledger categorise --export` and `--import` let Claude file the pending rows (see the [CLI reference](/docs/cli#ledger-categorise)).
+For a large backlog, use `ledger categorise --llm` or the `--export`/`--import` round trip above (see the [CLI reference](/docs/cli#ledger-categorise)).
 
 ## Next steps
 
