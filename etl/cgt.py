@@ -170,3 +170,107 @@ def _twelve_months_after(day: date) -> date:
         return day.replace(year=day.year + 1)
     except ValueError:
         return day.replace(year=day.year + 1, day=28)
+
+
+# --- Assets without contract notes, and losses carried between years -------
+
+def events_from_config(items: list[dict] | None) -> list[CGTEvent]:
+    """CGT events for assets with no contract notes (gold, crypto, collectibles).
+
+    Each item in tax.yaml `cgt_events` gives asset, acquired, disposed,
+    cost_base and proceeds (dates ISO). Several purchases sold together can be
+    one event, dated from the first purchase: for a loss the holding period
+    changes nothing, and for a gain list the parcels separately.
+    """
+    events = []
+    for i, item in enumerate(items or []):
+        missing = [k for k in ("asset", "acquired", "disposed", "cost_base", "proceeds") if k not in item]
+        if missing:
+            raise CGTError(f"cgt_events[{i}]: missing {', '.join(missing)}")
+        acquired, disposed = _as_date(item["acquired"]), _as_date(item["disposed"])
+        if disposed < acquired:
+            raise CGTError(f"cgt_events[{i}] {item['asset']}: disposed before it was acquired")
+        events.append(CGTEvent(code=str(item["asset"]), units=float(item.get("units", 1)),
+                               acquired=acquired, disposed=disposed,
+                               cost_base=round(float(item["cost_base"]), 2),
+                               proceeds=round(float(item["proceeds"]), 2)))
+    return events
+
+
+def _as_date(value) -> date:
+    return value if isinstance(value, date) else date.fromisoformat(str(value))
+
+
+def lodged_losses_carried_forward(lodged: list[dict]) -> dict[int, float]:
+    """Net capital losses each lodged return carried forward (label 18V).
+
+    A lodged year with no 18V entry carried forward nothing, so it reads as 0.
+    """
+    out = {}
+    for year in lodged or []:
+        if not year.get("fy"):
+            continue
+        out[int(year["fy"])] = sum(float(c.get("value") or 0) for c in (year.get("carry_forward") or [])
+                                   if str(c.get("label", "")).upper() == "18V")
+    return out
+
+
+def losses_brought_forward(fy: int, events: list[CGTEvent], anchors: dict[int, float]) -> dict:
+    """Net capital losses available at the start of `fy`.
+
+    Starts from the latest known balance before `fy` (an `anchors` entry: what a
+    lodged return carried forward, or a correction in tax.yaml) and rolls it
+    through any later years with the ledger's own CGT events. With no anchor it
+    rolls from the first event.
+    """
+    earlier = [y for y in anchors if y < fy]
+    if earlier:
+        start = max(earlier)
+        balance, basis = float(anchors[start]), start
+        start += 1
+    else:
+        balance, basis = 0.0, None
+        start = min((e.financial_year for e in events), default=fy)
+    for year in range(start, fy):
+        balance = summarise(events, year, balance)["losses_carried_forward"]
+    return {"amount": round(balance, 2), "from_fy": basis}
+
+
+def unrecorded_losses(events: list[CGTEvent], lodged: dict[int, float],
+                      corrections: dict[int, float], upto_fy: int) -> list[dict]:
+    """Lodged years whose carried-forward loss is smaller than the ledger's.
+
+    Each year is rolled from the year before it (as lodged, or as corrected)
+    with the ledger's events. A larger ledger figure means a loss the lodged
+    return doesn't show: an asset sold at a loss that wasn't reported, or a
+    balance dropped between returns. Only shortfalls are listed: the ledger
+    may not know every gain (employee shares, for instance).
+    """
+    anchors = {**lodged, **corrections}
+    out = []
+    for year in sorted(y for y in lodged if y <= upto_fy):
+        prior = {y: v for y, v in anchors.items() if y < year}
+        opening = losses_brought_forward(year, events, prior)["amount"]
+        ledger = summarise(events, year, opening)["losses_carried_forward"]
+        if ledger - lodged[year] > 1:
+            out.append({"fy": year, "lodged": lodged[year], "ledger": round(ledger, 2),
+                        "corrected": corrections.get(year)})
+    return out
+
+
+def capital_gains_for(fy: int, notes_dir: Path | None, tax_config: dict, lodged: list[dict]) -> dict:
+    """Everything the return needs for item 18, for both the API and the CLI.
+
+    Events come from the contract notes and tax.yaml `cgt_events`. Losses
+    brought forward start from the lodged returns (18V), with tax.yaml
+    `capital_losses_carried_forward` ({fy: amount}) correcting a lodged figure.
+    """
+    events = events_from_notes(notes_dir) if notes_dir and notes_dir.is_dir() else []
+    events += events_from_config(tax_config.get("cgt_events"))
+    lodged_cf = lodged_losses_carried_forward(lodged)
+    corrections = {int(k): float(v) for k, v in (tax_config.get("capital_losses_carried_forward") or {}).items()}
+    brought = losses_brought_forward(fy, events, {**lodged_cf, **corrections})
+    summary = summarise(events, fy, brought["amount"])
+    return {**summary,
+            "brought_forward": brought["amount"], "brought_forward_from_fy": brought["from_fy"],
+            "unrecorded_losses": unrecorded_losses(events, lodged_cf, corrections, fy)}

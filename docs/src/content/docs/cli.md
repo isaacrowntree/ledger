@@ -106,7 +106,16 @@ ledger reconcile --no-chain      # skip the per-row running-balance check
 ### `ledger cgt`
 
 Capital gains for a financial year, from the CommSec contract notes in
-`staging/commsec/`.
+`staging/commsec/` and any `cgt_events` in `config/tax.yaml` (assets without
+contract notes, such as gold or crypto).
+
+Net capital losses brought forward start from the last lodged return in
+`config/ato_returns.yaml` (label 18V) and roll through later years with the
+ledger's own events. `capital_losses_carried_forward` in `tax.yaml` corrects a
+lodged figure, and `--carried-forward-losses` overrides it for one run. Any
+lodged year that carried forward less loss than the ledger finds is flagged,
+so a sale at a loss that never made it onto a return, or a balance dropped
+between returns, shows up.
 
 ```sh
 ledger cgt --fy 2025

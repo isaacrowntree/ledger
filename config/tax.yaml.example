@@ -97,3 +97,17 @@ manual_entries: {}
   #   - label: "Donations"
   #     amount: -689.00
   #     section: "deductions"
+
+# Assets sold without broker contract notes (gold, crypto, collectibles).
+# CommSec contract notes in staging/commsec/ are read automatically.
+# cgt_events:
+#   - asset: "Gold bullion"
+#     acquired: 2020-08-03
+#     disposed: 2021-03-10
+#     cost_base: 10000.00     # purchase price plus costs
+#     proceeds: 9000.00       # sale price less costs
+
+# Net capital losses (label 18V) are brought forward from config/ato_returns.yaml
+# automatically. Correct a lodged figure here, keyed by the FY carried out of:
+# capital_losses_carried_forward:
+#   2025: 9000

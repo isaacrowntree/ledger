@@ -52,8 +52,9 @@ def get_conn():
     return conn
 
 
-def _capital_gains(fy: int) -> dict:
-    """Summarise capital gains for a year from the CommSec contract notes.
+def _capital_gains(fy: int, tax_config: dict | None = None) -> dict:
+    """Summarise capital gains for a year: CommSec contract notes, tax.yaml
+    `cgt_events`, and net capital losses brought forward from earlier years.
 
     A missing or unreadable note must not take down the whole return, so the
     failure is reported alongside a zeroed summary — the tax tab can then say
@@ -63,15 +64,14 @@ def _capital_gains(fy: int) -> dict:
         "fy": fy, "events": [], "gross_gains": 0.0, "discountable_gains": 0.0,
         "other_gains": 0.0, "losses": 0.0, "losses_applied": 0.0, "discount": 0.0,
         "net_capital_gain": 0.0, "losses_carried_forward": 0.0, "error": None,
+        "brought_forward": 0.0, "brought_forward_from_fy": None, "unrecorded_losses": [],
     }
-    if not COMMSEC_NOTES_DIR.is_dir():
-        return empty
+    archive = ato_archive.load_ato_returns(ATO_RETURNS_CONFIG_PATH)["taxpayers"]
     try:
-        events = cgt_calc.events_from_notes(COMMSEC_NOTES_DIR)
+        summary = cgt_calc.capital_gains_for(fy, COMMSEC_NOTES_DIR, tax_config or {},
+                                             archive[0]["lodged"] if archive else [])
     except Exception as exc:                     # noqa: BLE001 - surfaced to the UI
         return {**empty, "error": str(exc)}
-
-    summary = cgt_calc.summarise(events, fy)
     return {**summary, "events": [e.as_dict() for e in summary["events"]], "error": None}
 
 
@@ -1309,7 +1309,7 @@ def api_ato_return():
     manual = tax_config.get("manual_entries", {}).get(fy_int, [])
     manual_totals = manual_entry_calc.summarise(manual)
     tax_withheld = manual_entry_calc.tax_withheld(manual)
-    capital_gains = _capital_gains(fy_int)
+    capital_gains = _capital_gains(fy_int, tax_config)
 
     # Spouse info
     spouse = tax_config.get("taxpayer", {}).get("spouse", {})
