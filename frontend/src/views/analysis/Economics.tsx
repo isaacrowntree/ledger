@@ -65,7 +65,7 @@ export function Economics() {
                       Taxes paid through spending, worked out from {year}'s transactions. Spending includes shared
                       household bills at the full amount you paid, so these cover the household, not just you.
                     </p>
-                    <table className="ledger">
+                    <div className="table-wrap"><table className="ledger">
                       <thead><tr><th>Tax or charge</th><th className="num">Amount</th><th>How it was worked out</th></tr></thead>
                       <tbody>
                         {ind.lines.map((l) => (
@@ -80,7 +80,7 @@ export function Economics() {
                           <tr className="total"><td>With tolls and other charges</td><td className="num"><Money value={-ind.total} /></td><td /></tr>
                         )}
                       </tbody>
-                    </table>
+                    </table></div>
                   </>
                 )}
               </Section>
@@ -93,7 +93,7 @@ export function Economics() {
 
               {d.inflation_adjusted_spending.length > 0 && (
                 <Section title="Spending, adjusted for inflation" aside={hasCpi ? `In ${d.cpi.base_year} dollars` : undefined}>
-                  <table className="ledger">
+                  <div className="table-wrap"><table className="ledger">
                     <thead><tr><th>Category</th><th className="num">As spent</th>{hasCpi && <><th className="num">In {d.cpi.base_year} dollars</th><th className="num">Real change</th></>}</tr></thead>
                     <tbody>
                       {d.inflation_adjusted_spending.map((s) => (
@@ -102,7 +102,7 @@ export function Economics() {
                             <td className="num">{s.real_change_pct != null ? `${s.real_change_pct > 0 ? "+" : ""}${s.real_change_pct.toFixed(1)}%` : "—"}</td></>}</tr>
                       ))}
                     </tbody>
-                  </table>
+                  </table></div>
                 </Section>
               )}
 
