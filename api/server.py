@@ -9,7 +9,7 @@ from api import schemas
 from api.schemas import body, sql_value
 
 from etl import db
-from etl.merchant import merchant_key
+from etl.merchant import direction as direction_of, merchant_key
 from etl.merchant_store import MerchantStore
 from etl.cpi import sync_cpi, get_cpi_for_year, get_cpi_history, get_latest_cpi, adjust_for_inflation
 from etl.dedup import find_duplicates, resolve_duplicates
@@ -173,22 +173,20 @@ def api_transactions():
         params.append(int(request.args["limit"]))
     rows = conn.execute(query, params).fetchall()
 
-    store = None
-    names = None
-    results = []
-    for r in rows:
-        d = dict(r)
+    results = [dict(r) for r in rows]
+    for d in results:
         d["tags"] = [t["tag"] for t in conn.execute(
             "SELECT tag FROM transaction_tags WHERE transaction_id = ?", (d["id"],))]
         d["suggestions"] = []
-        if d["category_name"] in (None, "Uncategorized") and len(results) < SUGGEST_LIMIT:
-            if store is None:
-                store = MerchantStore(conn)
-                names = {c["id"]: c["name"] for c in conn.execute("SELECT id, name FROM categories")}
+    # Suggestions for Uncategorized rows, embedded in one batch.
+    wanted = [d for d in results if d["category_name"] in (None, "Uncategorized")][:SUGGEST_LIMIT]
+    if wanted:
+        store = MerchantStore(conn)
+        names = {c["id"]: c["name"] for c in conn.execute("SELECT id, name FROM categories")}
+        for d, vec in zip(wanted, store.embed([d["description"] for d in wanted])):
             d["suggestions"] = [
                 {"category": names[s.category_id], "score": round(s.score, 2)}
-                for s in store.suggest(d["description"], d["amount"], top=3, exclude_txn=d["id"])]
-        results.append(d)
+                for s in store.suggest(d["description"], d["amount"], top=3, exclude_txn=d["id"], vec=vec)]
     conn.close()
     return jsonify(results)
 
@@ -212,7 +210,7 @@ def api_merchants_to_review():
     wanted = {(l["merchant"], l["direction"]) for l in labels}
     rows: dict = {}
     for t in conn.execute("SELECT description, amount, date FROM transactions ORDER BY date DESC"):
-        k = (merchant_key(t["description"]), "in" if t["amount"] > 0 else "out")
+        k = (merchant_key(t["description"]), direction_of(t["amount"]))
         if k in wanted:
             rows.setdefault(k, []).append(t)
     out = []
@@ -268,12 +266,14 @@ def api_transactions_summary():
 def _same_merchant_filed_elsewhere(conn, txn_id: int, description: str, amount: float,
                                    category_id: int) -> list[int]:
     """Unconfirmed rows from the same merchant (and direction) under another category."""
-    key = merchant_key(description)
-    rows = conn.execute(
-        "SELECT id, description FROM transactions WHERE id != ? AND category_id IS NOT ? "
-        "AND COALESCE(category_confidence, 0) < 1 AND (amount > 0) = ?",
-        (txn_id, category_id, amount > 0)).fetchall()
-    return [r["id"] for r in rows if merchant_key(r["description"]) == key]
+    ids = MerchantStore(conn).transactions_of(
+        merchant_key(description), direction_of(amount), confirmed=False)
+    if not ids:
+        return []
+    others = {r[0] for r in conn.execute(
+        f"SELECT id FROM transactions WHERE id IN ({','.join('?' * len(ids))}) AND category_id IS NOT ?",
+        (*ids, category_id))}
+    return [i for i in ids if i != txn_id and i in others]
 
 
 @app.route("/api/transactions/<int:txn_id>", methods=["PATCH"])
@@ -481,6 +481,10 @@ def api_summary_period():
     })
 
 
+# What counts as spending and as income in the views below (`t` is transactions).
+SPENT = "(t.amount < 0 OR t.id IN (SELECT deposit_id FROM reimbursements))"
+EARNED = "(t.amount > 0 AND t.id NOT IN (SELECT deposit_id FROM reimbursements))"
+
 # Spending and income views count a repayment from a person (see etl/reimburse.py)
 # as negative spending in the category of what it repaid, not as income: a
 # friend's $60 for a $300 dinner leaves Eating Out at $240. Cash views (the
@@ -491,10 +495,10 @@ def api_summary_monthly():
     conn = get_conn()
     year = request.args.get("year")
 
-    query = """
+    query = f"""
         SELECT strftime('%Y-%m', t.date) as month,
-               SUM(CASE WHEN (t.amount < 0 OR t.id IN (SELECT deposit_id FROM reimbursements)) THEN t.amount ELSE 0 END) as expenses,
-               SUM(CASE WHEN (t.amount > 0 AND t.id NOT IN (SELECT deposit_id FROM reimbursements)) THEN t.amount ELSE 0 END) as income
+               SUM(CASE WHEN {SPENT} THEN t.amount ELSE 0 END) as expenses,
+               SUM(CASE WHEN {EARNED} THEN t.amount ELSE 0 END) as income
         FROM transactions t
         JOIN accounts a ON t.account_id = a.id
     """
@@ -626,14 +630,14 @@ def api_budget_vs_actual():
 def api_summary_trends():
     """Monthly spending by category over time."""
     conn = get_conn()
-    query = """
+    query = f"""
         SELECT strftime('%Y-%m', t.date) as month,
                c.name as category,
                SUM(t.amount) as total
         FROM transactions t
         LEFT JOIN categories c ON t.category_id = c.id
         JOIN accounts a ON t.account_id = a.id
-        WHERE (t.amount < 0 OR t.id IN (SELECT deposit_id FROM reimbursements))
+        WHERE {SPENT}
     """
     params = []
     if request.args.get("from"):
@@ -814,10 +818,10 @@ def api_year_review():
     year = request.args.get("year", "2025")
 
     # Monthly income/expenses
-    monthly = conn.execute("""
+    monthly = conn.execute(f"""
         SELECT strftime('%Y-%m', t.date) as month,
-               SUM(CASE WHEN (t.amount > 0 AND t.id NOT IN (SELECT deposit_id FROM reimbursements)) THEN t.amount ELSE 0 END) as income,
-               SUM(CASE WHEN (t.amount < 0 OR t.id IN (SELECT deposit_id FROM reimbursements)) THEN t.amount ELSE 0 END) as expenses
+               SUM(CASE WHEN {EARNED} THEN t.amount ELSE 0 END) as income,
+               SUM(CASE WHEN {SPENT} THEN t.amount ELSE 0 END) as expenses
         FROM transactions t
         JOIN accounts a ON t.account_id = a.id
         WHERE strftime('%Y', t.date) = ? AND t.is_transfer = 0 AND a.account_type NOT IN ('loan')
@@ -836,11 +840,11 @@ def api_year_review():
     """, (year,)).fetchall()
 
     # Top merchants
-    merchants = conn.execute("""
+    merchants = conn.execute(f"""
         SELECT t.description, COUNT(*) as count, SUM(t.amount) as total
         FROM transactions t
         JOIN accounts a ON t.account_id = a.id
-        WHERE strftime('%Y', t.date) = ? AND (t.amount < 0 OR t.id IN (SELECT deposit_id FROM reimbursements))
+        WHERE strftime('%Y', t.date) = ? AND {SPENT}
           AND t.is_transfer = 0 AND a.account_type NOT IN ('loan')
         GROUP BY UPPER(SUBSTR(t.description, 1, 40))
         ORDER BY total ASC LIMIT 20
@@ -859,9 +863,9 @@ def api_year_review():
 
     # Year-over-year comparison (previous year)
     prev_year = str(int(year) - 1)
-    prev_monthly = conn.execute("""
-        SELECT SUM(CASE WHEN (t.amount > 0 AND t.id NOT IN (SELECT deposit_id FROM reimbursements)) THEN t.amount ELSE 0 END) as income,
-               SUM(CASE WHEN (t.amount < 0 OR t.id IN (SELECT deposit_id FROM reimbursements)) THEN t.amount ELSE 0 END) as expenses
+    prev_monthly = conn.execute(f"""
+        SELECT SUM(CASE WHEN {EARNED} THEN t.amount ELSE 0 END) as income,
+               SUM(CASE WHEN {SPENT} THEN t.amount ELSE 0 END) as expenses
         FROM transactions t
         JOIN accounts a ON t.account_id = a.id
         WHERE strftime('%Y', t.date) = ? AND t.is_transfer = 0 AND a.account_type NOT IN ('loan')
@@ -876,17 +880,17 @@ def api_year_review():
     """, (year,)).fetchall()
 
     # Biggest single transactions
-    biggest_expense = conn.execute("""
+    biggest_expense = conn.execute(f"""
         SELECT t.date, t.description, t.amount, a.name as account_name
         FROM transactions t JOIN accounts a ON t.account_id = a.id
-        WHERE strftime('%Y', t.date) = ? AND (t.amount < 0 OR t.id IN (SELECT deposit_id FROM reimbursements)) AND t.is_transfer = 0
+        WHERE strftime('%Y', t.date) = ? AND {SPENT} AND t.is_transfer = 0
         ORDER BY t.amount ASC LIMIT 5
     """, (year,)).fetchall()
 
-    biggest_income = conn.execute("""
+    biggest_income = conn.execute(f"""
         SELECT t.date, t.description, t.amount, a.name as account_name
         FROM transactions t JOIN accounts a ON t.account_id = a.id
-        WHERE strftime('%Y', t.date) = ? AND (t.amount > 0 AND t.id NOT IN (SELECT deposit_id FROM reimbursements)) AND t.is_transfer = 0
+        WHERE strftime('%Y', t.date) = ? AND {EARNED} AND t.is_transfer = 0
         ORDER BY t.amount DESC LIMIT 5
     """, (year,)).fetchall()
 
@@ -961,14 +965,14 @@ def api_spreadsheet_outgoing():
     conn = get_conn()
     fy_int, fy_start, fy_end = _fy_dates(request.args.get("fy"))
 
-    rows = conn.execute("""
+    rows = conn.execute(f"""
         SELECT t.id, t.date, t.description, t.amount, t.source_type,
                c.name as category_name, a.name as account_name
         FROM transactions t
         LEFT JOIN categories c ON t.category_id = c.id
         JOIN accounts a ON t.account_id = a.id
         WHERE t.date >= ? AND t.date <= ?
-          AND (t.amount < 0 OR t.id IN (SELECT deposit_id FROM reimbursements))
+          AND {SPENT}
           AND t.is_transfer = 0
           AND a.account_type NOT IN ('loan')
         ORDER BY t.date, t.id
@@ -1001,14 +1005,14 @@ def api_spreadsheet_incoming():
     conn = get_conn()
     fy_int, fy_start, fy_end = _fy_dates(request.args.get("fy"))
 
-    rows = conn.execute("""
+    rows = conn.execute(f"""
         SELECT t.id, t.date, t.description, t.amount, t.source_type,
                c.name as category_name, a.name as account_name
         FROM transactions t
         LEFT JOIN categories c ON t.category_id = c.id
         JOIN accounts a ON t.account_id = a.id
         WHERE t.date >= ? AND t.date <= ?
-          AND (t.amount > 0 AND t.id NOT IN (SELECT deposit_id FROM reimbursements))
+          AND {EARNED}
           AND t.is_transfer = 0
           AND a.account_type NOT IN ('loan')
         ORDER BY t.date, t.id
@@ -1501,11 +1505,11 @@ def api_summary_economics():
     prev_salary = prev_salary_row["total"] if prev_salary_row else 0
 
     # --- Total expenses for the year ---
-    expense_row = conn.execute("""
+    expense_row = conn.execute(f"""
         SELECT COALESCE(SUM(t.amount), 0) as total
         FROM transactions t
         JOIN accounts a ON t.account_id = a.id
-        WHERE (t.amount < 0 OR t.id IN (SELECT deposit_id FROM reimbursements)) AND strftime('%Y', t.date) = ?
+        WHERE {SPENT} AND strftime('%Y', t.date) = ?
           AND t.is_transfer = 0 AND a.account_type NOT IN ('loan')
     """, (str(year),)).fetchone()
     total_expenses = abs(expense_row["total"]) if expense_row else 0
@@ -1551,24 +1555,24 @@ def api_summary_economics():
         real_savings_rate = round((after_tax - total_expenses) / after_tax * 100, 1)
 
     # --- Inflation-adjusted spending by category ---
-    cat_rows = conn.execute("""
+    cat_rows = conn.execute(f"""
         SELECT c.name as category, SUM(t.amount) as total
         FROM transactions t
         JOIN categories c ON t.category_id = c.id
         JOIN accounts a ON t.account_id = a.id
-        WHERE (t.amount < 0 OR t.id IN (SELECT deposit_id FROM reimbursements)) AND strftime('%Y', t.date) = ?
+        WHERE {SPENT} AND strftime('%Y', t.date) = ?
           AND t.is_transfer = 0 AND a.account_type NOT IN ('loan')
           AND c.name != 'Uncategorized'
         GROUP BY c.name
         ORDER BY total ASC
     """, (str(year),)).fetchall()
 
-    prev_cat_rows = conn.execute("""
+    prev_cat_rows = conn.execute(f"""
         SELECT c.name as category, SUM(t.amount) as total
         FROM transactions t
         JOIN categories c ON t.category_id = c.id
         JOIN accounts a ON t.account_id = a.id
-        WHERE (t.amount < 0 OR t.id IN (SELECT deposit_id FROM reimbursements)) AND strftime('%Y', t.date) = ?
+        WHERE {SPENT} AND strftime('%Y', t.date) = ?
           AND t.is_transfer = 0 AND a.account_type NOT IN ('loan')
           AND c.name != 'Uncategorized'
         GROUP BY c.name

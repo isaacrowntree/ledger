@@ -354,14 +354,13 @@ def cmd_ingest(source: str | None = None, dry_run: bool = False,
             elif not dry_run:
                 print("  Left in staging (windowed import)")
 
-    conn.commit()
-    conn.close()
-
     if not dry_run:
         converted = convert_unconverted(conn)
         if converted:
             print(f"\nConverted {len(converted)} foreign-currency rows PayPal left unconverted "
-                  f"(rate from the nearest converted rows; noted '{'FX estimated'}')")
+                  f"(rate from the nearest converted rows; noted 'FX estimated')")
+    conn.commit()
+    conn.close()
     summary = f"\nDone. Total inserted: {total_inserted}, Total skipped: {total_skipped}"
     if total_rejected:
         summary += f", REFUSED: {total_rejected} statement(s)"
