@@ -228,7 +228,7 @@ function CapitalGains({ cg }: { cg: ATOReturn["capital_gains"] }) {
             <tr><td colSpan={6}>Less 50% discount</td><td className="num"><Money value={-cg.discount} /></td><td /></tr>
             <tr className="total"><td colSpan={6}>Net capital gain</td><td className="num"><Money value={cg.net_capital_gain} /></td><td /></tr>
             {cg.losses_carried_forward > 0 && (
-              <tr><td colSpan={6}>Net capital losses carried forward (18V)</td><td className="num"><Money value={cg.losses_carried_forward} /></td><td /></tr>
+              <tr><td colSpan={6}>Net capital losses carried forward (18V){cg.carried_forward_corrected ? " · as corrected in tax.yaml" : ""}</td><td className="num"><Money value={cg.losses_carried_forward} /></td><td /></tr>
             )}
           </tbody>
         </table>

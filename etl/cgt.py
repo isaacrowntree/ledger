@@ -271,6 +271,10 @@ def capital_gains_for(fy: int, notes_dir: Path | None, tax_config: dict, lodged:
     corrections = {int(k): float(v) for k, v in (tax_config.get("capital_losses_carried_forward") or {}).items()}
     brought = losses_brought_forward(fy, events, {**lodged_cf, **corrections})
     summary = summarise(events, fy, brought["amount"])
-    return {**summary,
+    # A correction for this year is what this return should carry out (18V).
+    corrected_out = fy in corrections
+    if corrected_out:
+        summary["losses_carried_forward"] = round(corrections[fy], 2)
+    return {**summary, "carried_forward_corrected": corrected_out,
             "brought_forward": brought["amount"], "brought_forward_from_fy": brought["from_fy"],
             "unrecorded_losses": unrecorded_losses(events, lodged_cf, corrections, fy)}

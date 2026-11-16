@@ -421,6 +421,8 @@ export interface ATOReturn {
     losses_carried_forward: number;
     /** Net capital losses available at the start of the year, and the lodged (or corrected) year they came from. */
     brought_forward: number;
+    /** losses_carried_forward comes from a correction in tax.yaml for this year. */
+    carried_forward_corrected: boolean;
     brought_forward_from_fy: number | null;
     /** Lodged years that carried forward less loss than the ledger finds. */
     unrecorded_losses: { fy: number; lodged: number; ledger: number; corrected: number | null }[];

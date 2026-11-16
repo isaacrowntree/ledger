@@ -65,6 +65,7 @@ def _capital_gains(fy: int, tax_config: dict | None = None) -> dict:
         "other_gains": 0.0, "losses": 0.0, "losses_applied": 0.0, "discount": 0.0,
         "net_capital_gain": 0.0, "losses_carried_forward": 0.0, "error": None,
         "brought_forward": 0.0, "brought_forward_from_fy": None, "unrecorded_losses": [],
+        "carried_forward_corrected": False,
     }
     archive = ato_archive.load_ato_returns(ATO_RETURNS_CONFIG_PATH)["taxpayers"]
     try:

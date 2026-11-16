@@ -46,6 +46,14 @@ def test_a_correction_beats_the_lodged_figure_and_both_gaps_are_flagged(tmp_path
         {"fy": 2025, "lodged": 0, "ledger": 900.0, "corrected": 900.0}]
 
 
+def test_a_correction_for_the_year_itself_sets_what_it_carries_out(tmp_path):
+    cfg = {"cgt_events": [GOLD], "capital_losses_carried_forward": {2025: 900, 2026: 2900}}
+    this_year = capital_gains_for(2026, tmp_path / "none", cfg, LODGED)
+    assert (this_year["brought_forward"], this_year["losses_carried_forward"]) == (900.0, 2900.0)
+    assert this_year["carried_forward_corrected"] is True
+    assert capital_gains_for(2027, tmp_path / "none", cfg, LODGED)["brought_forward"] == 2900.0
+
+
 def test_years_the_ledger_knows_less_about_are_not_flagged():
     # The ledger lacks whatever made FY2024's 900 loss: a shortfall the other way isn't reported.
     assert unrecorded_losses([], {2024: 900}, {}, 2026) == []
