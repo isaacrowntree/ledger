@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "./api";
+import { Dock, ICONS, type DockTab } from "./components/Dock";
 import {
   createHashHistory,
   createRootRoute,
@@ -74,6 +75,11 @@ function ReviewCount() {
   return n ? <span className="rail-count" aria-label={`, ${n} waiting`}>{n}</span> : null;
 }
 
+const DOCK: DockTab[] = AREAS.map((a) => ({
+  to: a.to, label: a.label, area: areaOf(a.to),
+  icon: ICONS[areaOf(a.to) as keyof typeof ICONS],
+}));
+
 function Shell() {
   const pathname = useRouterState({ select: (st) => st.location.pathname });
   const current = AREAS.find((a) => a.children.length && areaOf(a.to) === areaOf(pathname));
@@ -106,6 +112,7 @@ function Shell() {
       <main className="main">
         <Outlet />
       </main>
+      <Dock tabs={DOCK} area={areaOf(pathname)} />
     </div>
   );
 }
