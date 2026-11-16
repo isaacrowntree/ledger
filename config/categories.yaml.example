@@ -73,6 +73,7 @@ categories:
   - name: Fees & Charges
   - name: Cash Withdrawal
   - name: Investments
+    kind: neutral
 
   # Mortgage
   - name: Mortgage

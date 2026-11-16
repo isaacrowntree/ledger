@@ -26,6 +26,7 @@ def test_default_kinds():
     assert default_kind("Transfers", False) == "neutral"
     assert default_kind("Personal (non-assessable)", False) == "neutral"
     assert default_kind("Employer Reimbursements", False) == "neutral"
+    assert default_kind("Investments", False) == "neutral"
     assert default_kind("Groceries", False) == "expense"
 
 

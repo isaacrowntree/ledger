@@ -55,9 +55,9 @@ Every report (overview, trends, year in review, tax) uses one definition:
 
 - **income** categories are money earned;
 - **expense** categories are money spent, net of their refunds and of repayments linked to their purchases (`ledger reimbursements`);
-- **neutral** categories are neither: `Transfers` between your own accounts, `Personal (non-assessable)` money such as family contributions or gifts, and `Employer Reimbursements` for expense claims your employer paid back.
+- **neutral** categories are neither: `Transfers` between your own accounts, `Personal (non-assessable)` money such as family contributions or gifts, `Employer Reimbursements` for expense claims your employer paid back, and `Investments` (buying or selling shares or crypto changes what you hold, not what you spent; gains are capital gains, from contract notes).
 
-Without `kind`, `is_income: true` makes a category income, those three names are neutral, and everything else is an expense. Being income is not the same as being business income: see [Business splits](../business-splits/).
+Without `kind`, `is_income: true` makes a category income, those four names are neutral, and everything else is an expense. Being income is not the same as being business income: see [Business splits](../business-splits/).
 
 **Naming convention:** Categories starting with `Business:` are automatically allocated at 100% to your business in the split engine. Categories starting with `Rental:` are for rental property expenses.
 

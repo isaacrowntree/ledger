@@ -9,7 +9,9 @@ Every category has a kind:
 - neutral: money that is neither earned nor spent: moving your own money
   (Transfers), money from family that isn't income (Personal (non-assessable)),
   and an employer paying back what you spent on its behalf (Employer
-  Reimbursements). It moves balances but never income or spending totals.
+  Reimbursements), and buying or selling investments (Investments: an asset
+  changing form; gains are capital gains, worked out from contract notes).
+  It moves balances but never income or spending totals.
 
 Set it per category in config/categories.yaml with `kind:`; without it, a
 category with `is_income: true` is income, the names in DEFAULT_NEUTRAL are
@@ -18,7 +20,7 @@ below, so the overview, trends, year in review and tax views agree.
 """
 
 KINDS = ("income", "expense", "neutral")
-DEFAULT_NEUTRAL = frozenset({"Transfers", "Personal (non-assessable)", "Employer Reimbursements"})
+DEFAULT_NEUTRAL = frozenset({"Transfers", "Personal (non-assessable)", "Employer Reimbursements", "Investments"})
 
 
 def default_kind(name: str, is_income: bool) -> str:
